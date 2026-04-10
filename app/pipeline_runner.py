@@ -6,42 +6,61 @@ Windows-only imports, overrides hardcoded PATHS, then exposes a clean
 Design notes
 ------------
 * `win32com` / ABBYY is Windows-only and is NOT available in the Docker
-  (Linux) container.  We inject a no-op stub so the pipeline can import
-  cleanly and simply skips the ABBYY step (it already falls back gracefully
-  when `self.abbyy is None`).
+  (Linux) container.  We inject a comprehensive no-op stub covering all
+  sub-modules so the pipeline can import cleanly and falls back gracefully
+  when `self.abbyy is None`.
 * All hardcoded Windows paths in PATHS / RAG_CONFIG are overridden from the
   environment-driven config before the pipeline is executed.
 * The pipeline script is loaded via `exec()` into an isolated namespace to
   avoid polluting the global module space.
+* Loading is fully lazy — the pipeline script is NOT imported at startup,
+  only on the first actual convert request. This keeps /health fast.
 """
 import os
 import sys
 import types
 import shutil
 import tempfile
-import importlib
 from pathlib import Path
 from typing import Any, Dict
 
-# ── Stub win32com so the pipeline import works on Linux ──────────────────────
+
+# ── Comprehensive win32com / pywin32 stub (Linux-safe) ──────────────────────
 def _install_win32com_stub() -> None:
-    """Inject a minimal no-op win32com.client stub into sys.modules."""
-    if "win32com" not in sys.modules:
-        win32com = types.ModuleType("win32com")
-        client = types.ModuleType("win32com.client")
+    """
+    Inject no-op stubs for every win32/pywin32 module the pipeline touches.
+    Must be called BEFORE any exec() of the pipeline script.
+    """
+    class _NullObj:
+        """A do-nothing object that absorbs any attribute access or call."""
+        def __init__(self, *a, **kw): pass
+        def __getattr__(self, _): return self
+        def __call__(self, *a, **kw): return self
+        def __iter__(self): return iter([])
+        def __bool__(self): return False
 
-        class _Dispatch:
-            def __init__(self, *a, **kw):
-                pass
-            def __getattr__(self, item):
-                return self
-            def __call__(self, *a, **kw):
-                return self
+    stubs = [
+        "win32com",
+        "win32com.client",
+        "win32com.server",
+        "win32con",
+        "win32api",
+        "win32gui",
+        "pywintypes",
+        "pythoncom",
+        "winerror",
+    ]
+    for name in stubs:
+        if name not in sys.modules:
+            mod = types.ModuleType(name)
+            # Attach the null class as common entry points
+            mod.Dispatch = _NullObj       # type: ignore[attr-defined]
+            mod.CoInitialize = _NullObj   # type: ignore[attr-defined]
+            mod.CoUninitialize = _NullObj # type: ignore[attr-defined]
+            sys.modules[name] = mod
 
-        client.Dispatch = _Dispatch
-        win32com.client = client  # type: ignore[attr-defined]
-        sys.modules["win32com"] = win32com
-        sys.modules["win32com.client"] = client
+    # Make win32com.client accessible as attribute
+    sys.modules["win32com"].client = sys.modules["win32com.client"]  # type: ignore[attr-defined]
 
 
 _install_win32com_stub()
