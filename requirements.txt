@@ -1,0 +1,21 @@
+# ── Web server ────────────────────────────────────────────────────────────────
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# ── Core pipeline dependencies ─────────────────────────────────────────────────
+python-docx==1.1.2
+Pillow==11.2.1
+requests==2.32.3
+anthropic==0.49.0
+
+# ── RAG (ChromaDB vector store) ───────────────────────────────────────────────
+chromadb==0.6.3
+
+# ── Data / utilities ──────────────────────────────────────────────────────────
+pydantic==2.11.3
+
+# ── NOTE: pywin32 (win32com) is intentionally excluded ────────────────────────
+# It is Windows-only and not available in the Linux Docker container.
+# The pipeline's ABBYY/win32com calls are handled by a no-op stub injected
+# at startup; the pipeline falls back to DOCX input automatically.

@@ -1,0 +1,494 @@
+COMPLETE SGML KEYING RULES - ALL 3 DOCUMENTS
+================================================================================
+SOURCE: General + Securities + Table Keying Specifications  
+EXTRACTION: Administrative text removed, ALL tagging rules preserved
+UPDATED: March 2026 - Client feedback integrated
+CHANGES: 
+  1. Added French entities table (2 locations)
+  2. Updated GRAPHICS section with new naming convention
+================================================================================
+
+SECTION 1: GENERAL KEYING SPECIFICATIONS
+--------------------------------------------------------------------------------
+
+GENERAL INSTRUCTIONS FOR ALL SGML DATA
+
+
+Supplier DTD
+Use the CARSWELL.DTD to convert this material. 
+Use all of the entities listed in the CARSWELL.ENT where appropriate. 
+
+Tables of Contents
+Do not key Tables of Contents material. They may be helpful for an overview of the structure.
+
+Caret Coding Additions
+If ^caret coding additions are requested, do not include ^caret coding within <TI> tags.
+
+Title Material
+For French material convert <TI> contents with the first letter of the first word upper case and the following words all lower case. . Always key proper nouns (capitalized names for an individual person, place, animal, country, title etc.) with the first letter of the word or words upper case.
+For English material convert <TI> contents upper and lower case with the following exception. Convert <TI> contents for <SEC>, <SSEC>, <PARA> and legislation elements nested below with the first letter of the first word upper case and the following words all lower case. Always key proper nouns (capitalized names for an individual person, place, animal, country, title etc.) with the first letter of the word or words upper case. 
+Within a <TI> that references the proper name of an Act, Regulation, Loi, Code or Règlement use <EM> tags to surround the proper name. For example <TI>Interest rates in the <EM>Bank Act</EM></TI>. These references often appear in italic or bold in the text of the hard copy. 
+Do not surround the entire contents of <TI> with <EM> tags. If applying the above instruction results in surrounding the entire contents of <TI> with <EM> tags, do not use the <EM> tags. 
+Do not key periods at the end of </TI> tags.
+Do not use <CASEREF> within <TI> tags as this causes problems for WLEC TOC building.
+
+Content of <N> Tags 
+Empty <N></N> tags should not exist in the data. Please contact Data Analysis at Carswell if you do not have number content where <N> tags are required. 
+
+Freeform Material
+The <FREEFORM> tag is a container for free-flowing text. 
+Use <BLOCK1><TI> for centred headings (use <BLOCK0><TI> before <BLOCK1><TI> if it is necessary to capture two sets of centred headings).
+Use <BLOCK2><TI> for flush-left headings. 
+Use <BLOCK3><TI> for flush-left headings nested within <BLOCK2>. 
+Use <BLOCK4><TI> for flush-left headings nested within <BLOCK3> etc. 
+Use <P> tags for flush left text. 
+Use <P1> tags for indented text. 
+Use <NP><N><P> for numbered paragraphs where all of the paragraphs within the <FREEFORM> are numbered. 
+Use <LINE> tags for non-itemized lists and entries within an address. 
+Within <FREEFORM> use <ITEM><P> for lists with bullets or m-dashes. Do not key bullets or m-dashes within <ITEM> as a bullet is generated. 
+
+Edit Notes
+The <EDITNOTE> tag is used for editorial notes. The tag does not generate text or brackets. 
+The <EDITNOTE> tag allows <FREEFORM>.
+When placing an <EDITNOTE> within <TI> that contains existing text, key the &nbsp; entity at the beginning of the <EDITNOTE> so the editorial note text does not run into the title text. 
+If the <TI> tag is empty (i.e. the title content has been repealed and there is nothing left in the <TI> tag), the &nbsp; entity must still be used within the <EDITNOTE>, if the container tag generates the "LABEL" attribute, e.g. LABEL="Appendix", LABEL="Schedule", etc. See sample tagging below.
+
+A. e.g. &nbsp; entity required:
+
+<SCHEDDOC LABEL="Appendix">     with "LABEL" attribute
+<N>2</N>
+<TI><EDITNOTE>
+<FREEFORM>
+<P>&nbsp;[ Reg. 50/97, s. 29.]</P>   &nbsp; entity required
+</FREEFORM>
+</EDITNOTE></TI>
+<FREEFORM>
+<P>[ Reg. 50/97, s. 29.]</P>
+</FREEFORM>
+</SCHEDDOC>
+
+B. e.g.--&nbsp; not required:
+
+before repealed information added
+<MDIV0>   				 without <"LABEL" attribute
+<TI>Sample Documents</TI>
+…
+</MDIV0>
+
+
+after repealed information added:
+<MDIV0>   				
+<TI><EDITNOTE>			remove title text
+<FREEFORM>
+<P>[ Reg. 50/97, s. 29.]</P>	 &nbsp; entity not required within <editnote>
+</FREEFORM>
+</EDITNOTE></TI>
+<FREEFORM>
+<P>[ Reg. 50/97, s. 29.]</P>
+</FREEFORM>
+…
+</MDIV0>
+
+Do not use <EDITNOTE> within <TABLE>. Place it outside of the <TABLE> or if appropriate use the <TBLNOTES> tag.
+
+Footnotes
+The <FOOTNOTE> tag is used for footnote. 
+Always key a space following the closing </FOOTNOTE> tag (unless it is followed immediately by another closing tag).
+The <FOOTNOTE> tag allows <FREEFORM>. It also allows an optional <N> tag.
+The <N> tag within <FOOTNOTE> should only be used where expressly requested in the specifications for particular data (i.e. where standing footnote numbers need to be retained).
+Do not key the footnote symbol such as an asterisk ( * ) or dagger ( † ). Numbering will be generated on output.
+Do not use <FOOTNOTE> within <TABLE>. Use the <TBLNOTES> tag.  If the <TBLNOTE> contains an actual number rather than a symbol, please query Data Analysis at Carswell for direction. A symbol or series of symbols may be more appropriate. For example, the <TBLNOTE> may reference the number 51, which may be inappropriate if other <FOOTNOTE> elements are relying on generated numbers.
+The <FOOTNOTE> tag may be used within <TI> but must appear at the very end of the element.
+The <FOOTNOTE> tag may not nest inside itself. 
+The <FOOTNOTE> markup should appear for every occurrence of the <FOOTNOTE>. For print product output the uniquefn parameter will allow the footnote to appear just once at the bottom of the page. 
+
+Formatting Tags
+
+Within <FREEFORM> use <BOLD> to capture bolded text that is not a heading.
+Use <EM> to capture italicized text. 
+Use <QUOTE> to capture quotations.
+Use <SUP> to capture superscripted text. 
+Use <SUB> to capture subscripted text. 
+Use <STRIKE> to capture stricken text. 
+Use <CENTER> to capture text that is centered on the page.
+
+Entity Encoding
+
+Use the following entities when appropriate:
+
+Entity for < (less than): &lt;
+Entity for > (greater than): &gt;
+Entity for & (ampersand): &amp;
+Entity for " (double quote): &ldquo; or &rdquo;
+Entity for ' (apostrophe): &rsquo;
+Entity for non-breaking space: &nbsp;
+Entity for em dash: &mdash;
+Entity for en dash: &ndash;
+Entity for bullet: &bull;
+Entity for section sign: &sect;
+Entity for degree sign: &deg;
+
+Fractions
+For in-line fractions that begin with a whole number, use the &nbsp; entity to hold the space between the whole number and the fraction to ensure that the whole number does not break inappropriately on output. For example 1&nbsp;1/2, 2&nbsp;3/4.
+Do not apply this rule inside of the <TABLE> or <N> tag.
+
+French Data — Appropriate Entities 
+When converting French material key the entity &nbsp; (non-breaking space) before colons, before the "%" sign and before the "$". 
+Use the following entities within French text in place of the <SUP> tag:
+
+================================================================================
+FRENCH SUPERSCRIPT ENTITIES TABLE (CLIENT-PROVIDED)
+================================================================================
+
+Character/Text          Entity              Example Usage
+--------------------------------------------------------------------------------
+1er, 1re               &sup-1er;           Used for "premier/première"
+2e                     &sup-2e;            Used for "deuxième"
+3e                     &sup-3e;            Used for "troisième"  
+4e                     &sup-4e;            Used for "quatrième"
+e                      &sup-e;             General superscript "e"
+er                     &sup-er;            Used for ordinal numbers
+ers                    &sup-ers;           Plural ordinal
+ère                    &sup-ere;           Feminine ordinal
+ères                   &sup-eres;          Plural feminine ordinal
+ième                   &sup-ieme;          Common ordinal ending
+ièmes                  &sup-iemes;         Plural of above
+o                      &sup-o;             Superscript "o" (numero)
+os                     &sup-os;            Plural superscript "o"
+
+================================================================================
+
+NEVER place any of the above entities within the <SUP> tag. These entities are to be used in place of <SUP>. If the superscript content does not appear in the above chart, use <SUP> to capture the superscripted text. For example, 1ier would be captured as 1<SUP>ier</SUP> and NOT as 1<SUP>i&sup-er;</SUP>.
+
+
+DOCUMENTS / POLIDOC
+
+General Instructions: 
+
+[ANALYST: GENERAL INSTRUCTIONS FOR ALL SGML DATA appears above. Cut these General Instructions into  and adjust as necessary].
+
+Specific Instructions:
+
+Place each numbered document within <POLIDOC>. 
+For adding new <POLIDOC> and updates to existing sgm file:
+• If the current year data is going into a new file, it must be placed at the top of the file above previously keyed data.  Do not place it at the bottom of the file (i.e. data must be keyed in reverse chronological order).
+• If it is a revision to previously keyed <POLIDOC>, check with the Data Analyst before completing the update.
+
+When adding new <POLIDOC> do not delete existing <POLIDOC>.
+
+Structure each <POLIDOC> as follows:
+
+<POLIDOC LABEL="" LANG="" ADDDATE="" MODDATE="">
+<POLIDENT>
+<N>  </N>
+<TI>  </TI>
+</POLIDENT>
+<FREEFORM>
+</FREEFORM>
+</POLIDOC>
+
+When creating a <POLIDOC> for English material use LANG="EN".
+When creating a <POLIDOC> for French material use LANG="FR".
+
+The LABEL attribute should contain either "OSC Rule", "OSC Blanket Order", "OSC Notice", "OSC Policy", "OSC Staff Notice", "CSA Staff Notice", "CSA Notice", "MFDA Rule", "MFDA Policy", "NP", "NI", "MI", "CP", "Form" or other similar heading material that appears in the hard copy. If the material does not fall into one of these categories and the data source does not provide an obvious label, use a category that describes the material content. Do not leave the LABEL attribute empty.
+
+Use ADDDATE for new <POLIDOC> elements. 
+Use MODDATE for revisions to existing <POLIDOC> elements. 
+The date format is YYYYMMDD (e.g. 20250315 for March 15, 2025).
+ADDDATE should be the actual effective date indicated on the material or publication date.
+MODDATE should be the date of modification when revising existing content.
+
+POLIDOC Identification (<POLIDENT>):
+
+Immediately following the <POLIDENT> tag, key <N></N> with the document number.
+Following the <N></N> tag, key <TI></TI> with the document title.
+
+The document number should include the alphanumeric identifier (e.g., "51-105", "31-103", "NI 81-107").
+The title should be the full title as it appears in the source document.
+If the document number contains a space (e.g., "NI 51-105"), keep the space in the <N> tag.
+
+Do not include effective dates or version numbers in the <TI> tag unless they are part of the official title.
+
+POLIDOC Content (<FREEFORM>):
+
+All document content goes within the <FREEFORM> tag.
+Follow the Freeform Material instructions above for proper tagging of headings, paragraphs, lists, etc.
+
+Use BLOCK tags appropriately:
+- <BLOCK2><TI> for major section headings
+- <BLOCK3><TI> for subsection headings nested within BLOCK2
+- <BLOCK4><TI> for sub-subsection headings nested within BLOCK3
+- Continue nesting as needed
+
+Number tags (<N>):
+- Extract section numbers, subsection numbers, and paragraph numbers into <N> tags
+- Place <N> tags before <TI> tags in BLOCK structures
+- For numbered paragraphs, use <NP><N><P> structure if all paragraphs in the section are numbered
+
+Paragraph tags:
+- Use <P> for regular paragraphs
+- Use <P1> for indented paragraphs
+- Use <ITEM><P> for list items (do not key bullets)
+
+Text formatting:
+- Use <BOLD> for bolded text that is not a heading
+- Use <EM> for italicized text, especially for Act/Regulation references
+- Do not bold or italicize entire <TI> tags
+
+Tables:
+- Follow the table keying specifications in Section 3
+- Use <TABLE>, <TBLROW>, <TBLCELL> structure
+- Use <TBLNOTES> for table footnotes
+
+BLOCK Hierarchy Rules:
+- BLOCKs must nest properly: BLOCK2 contains BLOCK3, BLOCK3 contains BLOCK4, etc.
+- Never skip levels (e.g., do not go from BLOCK2 directly to BLOCK4)
+- Never place a higher-level BLOCK inside a lower-level BLOCK
+- Close BLOCK tags in reverse order of opening
+
+Section Numbers and Titles:
+- For sections with numbers, structure as: <BLOCK2><N>1.1</N><TI>Title Text</TI></BLOCK2>
+- For sections without numbers, omit the <N> tag: <BLOCK2><TI>Title Text</TI></BLOCK2>
+- Extract the number exactly as it appears (e.g., "1.1", "(a)", "A", "Schedule 1")
+
+Lists and ITEM Tags:
+- Use <ITEM><P> for bulleted lists
+- Do not key bullet characters (•, -, etc.) as they are generated
+- Use <ITEM> for lists introduced by colons
+- For numbered lists where only some items are numbered, use regular <P> or <NP><N><P> as appropriate
+
+French Data — Appropriate Entities 
+When converting French material key the entity &nbsp; (non-breaking space) before colons, before the "%" sign and before the "$". 
+Use the following entities within French text in place of the <SUP> tag:
+
+================================================================================
+FRENCH SUPERSCRIPT ENTITIES TABLE (CLIENT-PROVIDED - SECOND OCCURRENCE)
+================================================================================
+
+Character/Text          Entity              Example Usage
+--------------------------------------------------------------------------------
+1er, 1re               &sup-1er;           Used for "premier/première"
+2e                     &sup-2e;            Used for "deuxième"
+3e                     &sup-3e;            Used for "troisième"  
+4e                     &sup-4e;            Used for "quatrième"
+e                      &sup-e;             General superscript "e"
+er                     &sup-er;            Used for ordinal numbers
+ers                    &sup-ers;           Plural ordinal
+ère                    &sup-ere;           Feminine ordinal
+ères                   &sup-eres;          Plural feminine ordinal
+ième                   &sup-ieme;          Common ordinal ending
+ièmes                  &sup-iemes;         Plural of above
+o                      &sup-o;             Superscript "o" (numero)
+os                     &sup-os;            Plural superscript "o"
+
+================================================================================
+
+NEVER place any of the above entities within the <SUP> tag. These entities are to be used in place of <SUP>. If the superscript content does not appear in the above chart, use <SUP> to capture the superscripted text. For example, 1ier would be captured as 1<SUP>ier</SUP> and NOT as 1<SUP>i&sup-er;</SUP>.
+
+Common Tagging Patterns:
+
+Section with Number and Title:
+<BLOCK2>
+<N>1.1</N>
+<TI>Application</TI>
+<P>This section applies to...</P>
+</BLOCK2>
+
+Subsection with Number and Title:
+<BLOCK3>
+<N>(a)</N>
+<TI>Definitions</TI>
+<P>In this section...</P>
+</BLOCK3>
+
+List after Colon:
+<P>The following factors must be considered:</P>
+<ITEM><P>the nature and extent of the investment</P></ITEM>
+<ITEM><P>the risk tolerance of the client</P></ITEM>
+<ITEM><P>the investment objectives</P></ITEM>
+
+Numbered Paragraph:
+<NP>
+<N>1.</N>
+<P>This is a numbered paragraph.</P>
+</NP>
+
+Table with Header:
+<TABLE>
+<TBLROW>
+<TBLCELL><BOLD>Column 1</BOLD></TBLCELL>
+<TBLCELL><BOLD>Column 2</BOLD></TBLCELL>
+</TBLROW>
+<TBLROW>
+<TBLCELL>Data 1</TBLCELL>
+<TBLCELL>Data 2</TBLCELL>
+</TBLROW>
+</TABLE>
+
+GRAPHICS:
+================================================================================
+UPDATED GRAPHICS SECTION (CLIENT-PROVIDED - MARCH 2026)
+================================================================================
+
+Use <GRAPHIC> to capture images that cannot be captured using SGML tagging. Convert /scan all charts, diagrams, pictorial text into graphics with BMP extension. Dense tables and forms can be included.
+Place the .BMP filenames within the <GRAPHIC> tags. For e.g. <GRAPHIC FILENAME="XXXXXXXX.BMP">.
+Surround each <GRAPHIC> tag with <P>. For e.g. <P><GRAPHIC FILENAME="XXXXXXXX.BMP"></P>
+Graphics are to be scanned at 300 dpi.
+Graphics should not be scanned in color.
+The .BMP file name must be unique across each file.
+Assign a file name beginning with "SB1", and continue naming Graphics in sequential order as they are encountered. The graphic filenames will not be provided.
+Filenames must not exceed 8 characters in length (excluding the extension). For e.g.
+<GRAPHIC FILENAME="SB1XXXXX.BMP">
+i.e. SB100001.BMP
+      SB100002.BMP and so on.
+Use <LINKTEXT> within the <GRAPHIC></GRAPHIC> tags to capture a text alternative for the graphic only if one is provided by the source document.
+<LINKTEXT> should be omitted if no text alternative for the graphic is provided by the source document.
+The following is an example of a typical <GRAPHIC> tagging and <LINKTEXT> content where alternative text was provided in the source document:
+<P><GRAPHIC FILENAME="SB100001.BMP"><LINKTEXT>Illustration of no stopping sign with a black stop symbol inside of a red circle with an interdictory stroke indicating no stopping and black arrows pointing left and right.</LINKTEXT></GRAPHIC></P>
+
+================================================================================
+
+
+SECTION 3: TABLE KEYING SPECIFICATIONS
+--------------------------------------------------------------------------------
+
+TABLES
+
+General Table Instructions:
+
+Use <TABLE> to capture all tabular data.
+Tables must have proper row and cell structure using <TBLROW> and <TBLCELL>.
+Each row is contained in <TBLROW> tags.
+Each cell within a row is contained in <TBLCELL> tags.
+
+Basic Table Structure:
+
+<TABLE>
+<TBLROW>
+<TBLCELL>Cell 1</TBLCELL>
+<TBLCELL>Cell 2</TBLCELL>
+</TBLROW>
+<TBLROW>
+<TBLCELL>Cell 3</TBLCELL>
+<TBLCELL>Cell 4</TBLCELL>
+</TBLROW>
+</TABLE>
+
+Table Headers:
+
+If the first row contains header information, use <BOLD> tags within the header cells:
+
+<TABLE>
+<TBLROW>
+<TBLCELL><BOLD>Header 1</BOLD></TBLCELL>
+<TBLCELL><BOLD>Header 2</BOLD></TBLCELL>
+</TBLROW>
+<TBLROW>
+<TBLCELL>Data 1</TBLCELL>
+<TBLCELL>Data 2</TBLCELL>
+</TBLROW>
+</TABLE>
+
+Do not use a separate header structure; simply bold the first row if it contains headers.
+
+Table Cell Content:
+
+Keep cell content simple. Each <TBLCELL> should contain plain text or text with minimal formatting.
+You may use <BOLD>, <EM>, <SUP>, <SUB> within table cells as needed.
+Do not use <P> tags within <TBLCELL>.
+Do not use complex structures like nested tables or lists within cells.
+
+Empty Cells:
+
+Empty table cells should be marked with the &nbsp; entity:
+
+<TBLCELL>&nbsp;</TBLCELL>
+
+This ensures proper rendering and spacing.
+
+Table Alignment:
+
+Do not specify column widths or cell alignments in the SGML.
+The system will handle layout automatically.
+
+Table Footnotes:
+
+Use <TBLNOTES> for table-specific footnotes or notes.
+Place <TBLNOTES> immediately after the closing </TABLE> tag.
+
+<TABLE>
+<TBLROW>
+<TBLCELL>Data with note<SUPNOTE>1</SUPNOTE></TBLCELL>
+</TBLROW>
+</TABLE>
+<TBLNOTES>
+<P><SUPNOTE>1</SUPNOTE> This is the table footnote text.</P>
+</TBLNOTES>
+
+Use <SUPNOTE> within the table cell to reference the note.
+In the <TBLNOTES>, begin with <SUPNOTE> followed by the note text in <P> tags.
+
+Complex Tables:
+
+For very dense or complex tables that cannot be easily captured in SGML:
+- Consider converting to a <GRAPHIC> instead
+- Consult with Data Analysis before proceeding
+- If converted to graphic, ensure proper <LINKTEXT> is provided
+
+Forms and Structured Data:
+
+Forms with fill-in fields can be captured as tables if the structure is simple.
+For complex forms with mixed content, consider using <GRAPHIC>.
+
+Table Best Practices:
+
+- Ensure each <TBLROW> has the same number of <TBLCELL> tags
+- Do not leave rows or cells unclosed
+- Use &nbsp; for empty cells rather than leaving them blank
+- Keep table structure as simple as possible
+- Use <BOLD> for headers in the first row
+- Place all footnotes in <TBLNOTES> after the table
+
+Multi-row Headers:
+
+If a table has multiple header rows, bold all header rows:
+
+<TABLE>
+<TBLROW>
+<TBLCELL><BOLD>Main Header</BOLD></TBLCELL>
+</TBLROW>
+<TBLROW>
+<TBLCELL><BOLD>Sub Header 1</BOLD></TBLCELL>
+<TBLCELL><BOLD>Sub Header 2</BOLD></TBLCELL>
+</TBLROW>
+<TBLROW>
+<TBLCELL>Data 1</TBLCELL>
+<TBLCELL>Data 2</TBLCELL>
+</TBLROW>
+</TABLE>
+
+Spanning Cells:
+
+The SGML does not support colspan or rowspan attributes.
+If the source table has merged cells, represent them by repeating the content in each cell that would be covered by the span, or leave some cells empty with &nbsp; as appropriate.
+If the table structure is too complex due to spans, consider converting to a <GRAPHIC>.
+
+
+================================================================================
+END OF COMPLETE KEYING RULES
+================================================================================
+
+IMPORTANT NOTES:
+
+1. This document consolidates all keying rules from three source specifications
+2. All administrative and project-management text has been removed
+3. All technical tagging rules have been preserved exactly
+4. French entities table has been added in two locations as per client feedback
+5. GRAPHICS section has been updated with new naming convention (SB1XXXXX)
+6. This document should be the single source of truth for all SGML keying
+
+VERSION HISTORY:
+- March 2026: Added French entities table, updated GRAPHICS section
+- Original: Consolidated from 3 source documents
+
+For questions or clarifications, contact Carswell Data Analysis.

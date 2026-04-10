@@ -1,0 +1,38 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env
+cloud-tool/
+
+# ── Build artifacts ───────────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+
+# ── Temp / output ─────────────────────────────────────────────────────────────
+/tmp/
+*.sgm
+*.sgml
+*.docx
+*.pdf
+*.log
+
+# ── Data (large files) — add selectively ─────────────────────────────────────
+data/chroma_db/
+# Keep vendor_sgms tracked (small SGM files for RAG)
+# data/vendor_sgms/  ← intentionally not ignored
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+*.ActivationToken
+*.key
+*.pem
