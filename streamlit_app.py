@@ -27,7 +27,7 @@ st.set_page_config(
     menu_items={
         "Get Help": None,
         "Report a bug": None,
-        "About": "Thomson Reuters Securities SGML Pipeline v0.0.5",
+        "About": "Thomson Reuters Securities SGML Pipeline v0.0.6",
     },
 )
 

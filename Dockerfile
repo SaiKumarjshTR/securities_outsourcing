@@ -11,7 +11,7 @@ FROM python:3.12-slim
 
 # Metadata
 LABEL maintainer="Thomson Reuters — Securities SGML Team"
-LABEL version="0.0.5"
+LABEL version="0.0.6"
 LABEL description="SGML Pipeline UI — PDF/DOCX to SGML conversion (Streamlit)"  
 
 # ── System dependencies ──────────────────────────────────────────────────────
@@ -70,16 +70,19 @@ ENV PYTHONUNBUFFERED=1 \
 
 # ── Health check ─────────────────────────────────────────────────────────────
 # Streamlit exposes /_stcore/health  (returns 200 OK when ready).
-# Update the Plexus liveness-probe path to: /_stcore/health
-HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
+# NOTE: Do NOT set --server.baseUrlPath — it causes Plexus readiness probe (GET /)
+# to receive a 307 redirect and mark the pod unhealthy.
+# Plexus ingress handles the URL prefix at the load balancer level.
+HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=5 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')" || exit 1
 
 # ── Expose port ───────────────────────────────────────────────────────────────
 EXPOSE 8501
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+# IMPORTANT: No --server.baseUrlPath here — Plexus strips the prefix at ingress.
+# Setting baseUrlPath makes Streamlit redirect GET / → 307, breaking health probes.
 CMD ["streamlit", "run", "streamlit_app.py", \
      "--server.port=8501", \
      "--server.address=0.0.0.0", \
-     "--server.headless=true", \
-     "--server.baseUrlPath=/208321/securities-commission-conversion"]
+     "--server.headless=true"]
