@@ -2,16 +2,17 @@
 # SGML Pipeline — Dockerfile
 # ─────────────────────────────────────────────────────────────────────────────
 # Target runtime: TR AI Platform (AWS ECS / Fargate, Linux x86-64)
-# API port     : 8501
-# Entry point  : uvicorn app.main:app
+# UI port      : 8501  (Streamlit)
+# Entry point  : streamlit run streamlit_app.py
+# Health check : GET /_stcore/health  (Streamlit built-in)
 # ─────────────────────────────────────────────────────────────────────────────
 
 FROM python:3.12-slim
 
 # Metadata
 LABEL maintainer="Thomson Reuters — Securities SGML Team"
-LABEL version="0.0.1"
-LABEL description="SGML Pipeline API — converts DOCX to SGML for TR publishing"
+LABEL version="0.0.5"
+LABEL description="SGML Pipeline UI — PDF/DOCX to SGML conversion (Streamlit)"  
 
 # ── System dependencies ──────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -43,8 +44,10 @@ RUN if [ -n "$TR_JFROG_USERNAME" ] && [ -n "$TR_JFROG_TOKEN" ]; then \
     fi
 
 # ── Copy application code ────────────────────────────────────────────────────
-COPY app/          ./app/
-COPY pipeline/     ./pipeline/
+COPY app/             ./app/
+COPY pipeline/        ./pipeline/
+COPY streamlit_app.py ./streamlit_app.py
+COPY .streamlit/      ./.streamlit/
 
 # ── Data directory (keying rules, vendor SGMLs, ChromaDB) ───────────────────
 RUN mkdir -p /app/data/vendor_sgms /tmp/sgml_pipeline
@@ -65,12 +68,18 @@ ENV PYTHONUNBUFFERED=1 \
     HOST=0.0.0.0 \
     TEMP_DIR=/tmp/sgml_pipeline
 
-# ── Health check (TR AI Platform probes /health) ─────────────────────────────
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/health')" || exit 1
+# ── Health check ─────────────────────────────────────────────────────────────
+# Streamlit exposes /_stcore/health  (returns 200 OK when ready).
+# Update the Plexus liveness-probe path to: /_stcore/health
+HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')" || exit 1
 
 # ── Expose port ───────────────────────────────────────────────────────────────
 EXPOSE 8501
 
 # ── Entry point ───────────────────────────────────────────────────────────────
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8501", "--workers", "1"]
+CMD ["streamlit", "run", "streamlit_app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true", \
+     "--server.baseUrlPath=/208321/securities-commission-conversion"]

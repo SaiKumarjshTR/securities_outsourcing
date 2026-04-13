@@ -5900,8 +5900,10 @@ class SGMLGenerator:
                     if not re.match(r'^<P1>', s):
                         break
                     # Collect this P1 block (single-line or multi-line)
-                    if s.endswith('</P1>'):
-                        # Single-line P1
+                    # Use 'in' not endswith so <P1>text</P1><FOOTNOTE>...</FOOTNOTE> lines
+                    # (which contain </P1> but don't end with it) are treated as single-line.
+                    if '</P1>' in s:
+                        # Single-line P1 (may have trailing FOOTNOTE markup)
                         group.append(sgml_lines[i])
                         i += 1
                     else:
