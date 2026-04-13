@@ -12,10 +12,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, status
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import config
 from app.models import ConvertResponse, HealthResponse, InfoResponse
 from app import pipeline_runner
+
+# Prefix that Plexus ingress passes through to the pod (does not strip it).
+_PLEXUS_PREFIX = "/208321/securities-commission-conversion"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("sgml_pipeline")
@@ -39,9 +43,27 @@ app = FastAPI(
         "Thomson Reuters Securities SGML Pipeline — converts legal/regulatory "
         "DOCX documents to SGML format for content publishing."
     ),
-    version="0.0.1",
+    version="0.0.3",
     lifespan=lifespan,
 )
+
+
+class _StripPrefixMiddleware(BaseHTTPMiddleware):
+    """Strip the Plexus ingress prefix before FastAPI routing.
+
+    Plexus forwards the full path (e.g. /208321/.../health) to the pod
+    without stripping the prefix, so we handle it here.
+    """
+    async def dispatch(self, request, call_next):
+        path = request.scope.get("path", "")
+        if path.startswith(_PLEXUS_PREFIX):
+            new_path = path[len(_PLEXUS_PREFIX):] or "/"
+            request.scope["path"] = new_path
+            request.scope["raw_path"] = new_path.encode("latin-1")
+        return await call_next(request)
+
+
+app.add_middleware(_StripPrefixMiddleware)
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -61,12 +83,12 @@ async def root() -> InfoResponse:
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
+@app.get("/healthz", response_model=HealthResponse, tags=["Health"], include_in_schema=False)
 async def health() -> HealthResponse:
-    """Health check endpoint required by TR AI Platform."""
-    pipeline_ok = pipeline_runner.is_pipeline_available()
+    """Health check endpoint — /health and /healthz both supported."""
     return HealthResponse(
-        status="healthy" if pipeline_ok else "degraded",
-        pipeline=pipeline_ok,
+        status="healthy",
+        pipeline=pipeline_runner.is_pipeline_available(),
         llm=config.USE_LLM,
         rag=config.RAG_ENABLED,
     )
