@@ -813,8 +813,9 @@ class CompleteDOCXExtractor:
         ('CP',  re.compile(r'^CP\s+\d', re.I)),
     ]
 
-    def __init__(self, docx_path: str):
+    def __init__(self, docx_path: str, pdf_path: str = None):
         self.docx_path = docx_path
+        self.pdf_path = pdf_path   # Optional: used for PyMuPDF endnote supplementation
         self.document = Document(docx_path)
         self._is_annual_report = self._detect_annual_report()
         self._footnotes: Dict[int, str] = self._load_footnotes()
@@ -1015,14 +1016,86 @@ class CompleteDOCXExtractor:
             pass
         return footnotes
 
+    # Roman numeral → integer mapping (lowercase) used for endnote detection.
+    _ROMAN_MAP: Dict[str, int] = {
+        'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
+        'vi': 6, 'vii': 7, 'viii': 8, 'ix': 9, 'x': 10,
+        'xi': 11, 'xii': 12, 'xiii': 13, 'xiv': 14, 'xv': 15,
+    }
+
+    def _load_pdf_endnotes(self) -> Dict[int, str]:
+        """Extract endnote texts from PDF using PyMuPDF when DOCX endnote text
+        couldn't be reliably extracted (e.g. due to OCR corruption of Roman numeral
+        markers like iv→IY).  Only called if self.pdf_path is set.
+
+        Scans last 2 pages for the pattern:
+          - span with size < 6.5pt matching a Roman numeral → endnote marker
+          - following spans with size < 9.5pt → endnote body text
+        Returns {fn_id: combined_text, ...}."""
+        if not (self.pdf_path and os.path.exists(self.pdf_path)):
+            return {}
+        try:
+            import fitz as _fitz
+        except ImportError:
+            return {}
+        endnotes: Dict[int, str] = {}
+        try:
+            pdf = _fitz.open(self.pdf_path)
+            total = len(pdf)
+            for pg_num in range(max(0, total - 2), total):
+                page = pdf[pg_num]
+                h = page.rect.height
+                # Collect all (y, size, text) tuples sorted by y
+                spans = []
+                for blk in page.get_text("dict")["blocks"]:
+                    for line in blk.get("lines", []):
+                        for span in line.get("spans", []):
+                            txt = span["text"].strip()
+                            if txt:
+                                spans.append((span["bbox"][1], span["size"], txt))
+                spans.sort(key=lambda x: x[0])
+                current_id: Optional[int] = None
+                current_parts: List[str] = []
+                for y, sz, txt in spans:
+                    y_pct = y / h
+                    if y_pct < 0.20 or y_pct > 0.93:
+                        continue   # skip header/running-footer rows
+                    if sz < 6.5 and txt.lower() in self._ROMAN_MAP:
+                        if current_id and current_parts:
+                            endnotes[current_id] = ' '.join(current_parts)
+                        current_id = self._ROMAN_MAP[txt.lower()]
+                        current_parts = []
+                    elif sz < 6.5 and txt.isdigit():
+                        if current_id and current_parts:
+                            endnotes[current_id] = ' '.join(current_parts)
+                        current_id = int(txt)
+                        current_parts = []
+                    elif current_id is not None and sz < 9.5:
+                        current_parts.append(txt)
+                if current_id and current_parts:
+                    endnotes[current_id] = ' '.join(current_parts)
+            pdf.close()
+        except Exception:
+            pass
+        return endnotes
+
     def _load_inline_footnotes(self) -> tuple:
         """Detect 'manual' superscript footnotes: body paragraphs that serve as
-        footnote definitions (start with superscript digit run or 'N text').
+        footnote definitions (start with superscript digit or Roman numeral run).
         Returns ({fn_num: text}, {para_indices_to_skip}).
+
+        v2 — adds Roman numeral support for Ontario OSCB endnote style:
+          • Body text contains superscript Roman numeral runs (i, ii, ... xi)
+            as inline references.
+          • Endnote section (style 'Body text (2)' typically) at end of doc
+            has paragraphs starting with superscript Roman numeral marker.
+          • Multi-paragraph endnote bodies are merged.
+          • If DOCX OCR artifacts corrupt a Roman marker, PyMuPDF supplements.
+
         Safety guards:
           (a) No real Word footnotes with content (self._footnotes is empty).
-          (b) At least 1 superscript-digit INLINE reference (after text content in para).
-          (c) Detected fn_num cross-referenced against known inline reference numbers.
+          (b) At least 1 superscript inline reference found in body text.
+          (c) Detected fn_num cross-referenced against known inline references.
           (d) Paragraph is not a heading style."""
         if self._footnotes:          # Real Word footnotes take priority — skip
             return {}, set()
@@ -1032,73 +1105,159 @@ class CompleteDOCXExtractor:
         try:
             all_paras = list(self.document.paragraphs)
             n = len(all_paras)
-            main_body_limit = max(1, int(n * 0.8))
-            # First pass: collect inline reference numbers — only superscript digits
-            # that appear AFTER some text content in a paragraph.
-            # This distinguishes "body cited as footnote ref" from "footnote body marker
-            # at paragraph start" (which also uses superscript for the footnote number).
+            # Use 95% so we catch late-appearing Roman numeral refs (e.g. Ontario OSCB
+            # where endnotes viii-xi are referenced near the end of the regulation body).
+            # 95% is safe: endnote body paragraphs start their first run with a superscript
+            # Roman numeral (seen_text=False), so they are never confused with body refs.
+            main_body_limit = max(1, int(n * 0.95))
+
+            # ── First pass: collect inline reference numbers ──────────────────
+            # Superscript digits OR Roman numerals that appear AFTER some text
+            # content in a paragraph (distinguishes inline refs from endnote markers
+            # which appear at the START of a paragraph).
             main_ref_nums: set = set()
             for p in all_paras[:main_body_limit]:
                 seen_text = False
                 for r in p.runs:
                     rpr = r._element.find(_W + 'rPr')
-                    is_super_digit = False
+                    is_super = False
                     if rpr is not None:
                         va = rpr.find(_W + 'vertAlign')
-                        if va is not None and va.get(_W + 'val') == 'superscript' \
-                                and r.text.strip().isdigit():
-                            is_super_digit = True
-                    if is_super_digit and seen_text:
-                        main_ref_nums.add(int(r.text.strip()))
-                    elif r.text.strip() and not is_super_digit:
+                        if va is not None and va.get(_W + 'val') == 'superscript':
+                            is_super = True
+                    t = r.text.strip()
+                    if is_super and seen_text and t:
+                        if t.isdigit():
+                            main_ref_nums.add(int(t))
+                        elif t.lower() in self._ROMAN_MAP:
+                            main_ref_nums.add(self._ROMAN_MAP[t.lower()])
+                    elif t and not is_super:
                         seen_text = True
+
             if not main_ref_nums:   # No inline footnote references → nothing to do
                 return {}, set()
-            # Second pass: FORWARD scan for footnote body paragraphs.
-            # Start at the 1/3 point (skip cover/intro) and scan to the end.
-            # This avoids the fragility of backward scans in web-scraped DOCXs that
-            # may have long copyright/navigation text between footnote bodies and the end.
+
+            # ── Second pass: scan for endnote/footnote body paragraphs ────────
+            # Use a while loop for multi-paragraph endnote body collection.
             scan_start = max(3, n // 3)
-            for i in range(scan_start, n):
+            i = scan_start
+            while i < n:
                 p = all_paras[i]
                 text = p.text.strip()
                 if not text:
+                    i += 1
                     continue
-                # Skip long non-digit paragraphs (disclaimers, copyright, navigation)
-                if len(text) > 150 and not text[0].isdigit():
-                    continue
-                # Skip heading-style paragraphs (numbered section titles ≠ footnote bodies)
+
                 style_name = (p.style.name or '').lower() if p.style else ''
                 if 'heading' in style_name:
+                    i += 1
                     continue
+
                 fn_num = None
                 fn_text = None
-                # Case 1: first non-blank run is a superscript digit
+
+                # Case 1: first non-blank run is a superscript digit or Roman numeral
                 for r in p.runs:
                     if not r.text.strip():
                         continue
                     rpr = r._element.find(_W + 'rPr')
-                    is_super_digit = False
+                    is_super = False
                     if rpr is not None:
                         va = rpr.find(_W + 'vertAlign')
-                        if va is not None and va.get(_W + 'val') == 'superscript' \
-                                and r.text.strip().isdigit():
-                            is_super_digit = True
-                    if is_super_digit:
-                        fn_num = int(r.text.strip())
-                        fn_text = re.sub(r'^\d+[. ]*\s*', '', text).strip()
+                        if va is not None and va.get(_W + 'val') == 'superscript':
+                            is_super = True
+                    t = r.text.strip()
+                    if is_super and t:
+                        if t.isdigit():
+                            fn_num = int(t)
+                            fn_text = re.sub(r'^\d+[. ]*\s*', '', text).strip()
+                        elif t.lower() in self._ROMAN_MAP:
+                            fn_num = self._ROMAN_MAP[t.lower()]
+                            fn_text = re.sub(r'^[ivxlIVXL]+[. ]*\s*', '', text).strip()
                     break   # Only examine the first non-blank run
+
                 # Case 2: paragraph starts with "N. " or "N " (digit + period/space)
                 if fn_num is None:
                     m = re.match(r'^(\d{1,2})[. ]\s*(.+)', text)
                     if m:
                         fn_num = int(m.group(1))
                         fn_text = m.group(2).strip()
-                # Cross-reference: fn_num must match a known inline reference + has text
+
+                # Case 3: paragraph starts with plain Roman numeral + space
+                # (handles docs where Roman marker is not formatted as superscript)
+                if fn_num is None:
+                    m = re.match(r'^([ivxlIVXL]{1,5})\s{1,3}(\S.{5,})', text)
+                    if m:
+                        rom = m.group(1).lower()
+                        if rom in self._ROMAN_MAP:
+                            fn_num = self._ROMAN_MAP[rom]
+                            fn_text = m.group(2).strip()
+
+                # ── Cross-reference + multi-paragraph collection ───────────────
                 if (fn_num is not None and fn_text and 1 <= fn_num <= 20
                         and fn_num in main_ref_nums):
-                    inline_fns[fn_num] = fn_text
+                    fn_parts = [fn_text]
                     skip_indices.add(i)
+                    current_style = p.style.name if p.style else ''
+                    j = i + 1
+                    while j < n:
+                        cont = all_paras[j]
+                        cont_text = cont.text.strip()
+                        if not cont_text:
+                            j += 1
+                            continue
+                        cont_style = cont.style.name if cont.style else ''
+                        if cont_style != current_style:
+                            break
+                        # Stop if this para itself starts a new numbered endnote
+                        is_new_fn = False
+                        for r in cont.runs:
+                            if not r.text.strip():
+                                continue
+                            rpr = r._element.find(_W + 'rPr')
+                            is_sup = False
+                            if rpr is not None:
+                                va = rpr.find(_W + 'vertAlign')
+                                if va is not None and va.get(_W + 'val') == 'superscript':
+                                    is_sup = True
+                            t2 = r.text.strip()
+                            if is_sup and t2 and (t2.isdigit() or t2.lower() in self._ROMAN_MAP):
+                                is_new_fn = True
+                            break
+                        # Also stop if text starts with plain Roman numeral (Case 3 pattern)
+                        if not is_new_fn:
+                            m3 = re.match(r'^([ivxlIVXL]{1,5})\s{1,3}(\S.{5,})', cont_text)
+                            if m3 and m3.group(1).lower() in self._ROMAN_MAP:
+                                is_new_fn = True
+                        # Also stop at OCR-corrupted Roman numeral markers: 1-5 uppercase
+                        # letters followed by tab OR 2+ spaces (e.g. ABBYY OCR of 'iv' → 'IY\t').
+                        if not is_new_fn:
+                            m4 = re.match(r'^[A-Z]{1,5}(\t|\s{2,})\S', cont_text)
+                            if m4:
+                                is_new_fn = True
+                        if is_new_fn:
+                            break
+                        fn_parts.append(cont_text)
+                        skip_indices.add(j)
+                        j += 1
+                    i = j
+                    inline_fns[fn_num] = ' '.join(fn_parts)
+                else:
+                    i += 1
+
+            # ── PyMuPDF supplementation for OCR-corrupted Roman markers ───────
+            # If body text referenced Roman-numeral endnotes but DOCX endnote section
+            # had OCR artifacts (e.g. iv→IY), fill any gaps from PDF text.
+            roman_ref_count = sum(
+                1 for r in main_ref_nums
+                if any(v == r for v in self._ROMAN_MAP.values())
+            )
+            if roman_ref_count > 0 and len(inline_fns) < len(main_ref_nums):
+                pdf_supplement = self._load_pdf_endnotes()
+                for fn_id, fn_text in pdf_supplement.items():
+                    if fn_id not in inline_fns and fn_id in main_ref_nums:
+                        inline_fns[fn_id] = fn_text
+
         except Exception:
             pass
         return inline_fns, skip_indices
@@ -1730,7 +1889,7 @@ class CompleteDOCXExtractor:
     # ─── CONTENT EXTRACTION ────────────────────────────────────────────────────
     # Matches OSC Bulletin chapter headers: "B.1.1 CSA Multilateral Staff Notice 31-367 – ..."
     _BULLETIN_HDR_RE = re.compile(
-        r'^[A-Z]\.\d+(?:\.\d+)+\s+(?:CSA|OSC|National|Multilateral|Staff)\b', re.I
+        r'^[A-Z]\.\d+(?:\.\d+)+\s+', re.I
     )
 
     def _detect_cover_page(self, content: List[Dict]) -> List[Dict]:
@@ -1777,6 +1936,27 @@ class CompleteDOCXExtractor:
             # Also set _past_title for HL=1 non-nav section headings (Definitions,
             # Background, IT IS ORDERED THAT, etc.) — these mark the start of body content
             # in legal docs that use only Heading #1 style (MB, NFLD, etc.).
+            # EXCEPTION: HL=1 paragraphs that are agency/commission names (pre-title cover
+            # elements like "Ontario Securities Commission" in OSC Bulletin docs) should be
+            # skipped and must NOT set _past_title (which would disable the all-caps-bold
+            # cover filter, allowing document-identifier lines like "CSA STAFF NOTICE 11-312"
+            # to leak into the FREEFORM body).
+            _is_agency_cover_hl1 = (
+                not _past_title
+                and _hl_ct == 1
+                and bool(re.search(
+                    r'\b(?:Securities\s+Commission|Securities\s+Authority|'
+                    r'Financial\s+Services\s+(?:Regulatory\s+)?Authority|'
+                    r'Capital\s+Markets\s+(?:Tribunal|Authority)|'
+                    r'Investment\s+Industry|Market\s+Regulation)',
+                    text, re.I
+                ))
+                and len(text.strip().split()) <= 6
+            )
+            if _is_agency_cover_hl1:
+                para.skip = True
+                skip_count += 1
+                continue   # do NOT set _past_title
             if (not _past_title and not para.skip
                     and _hl_ct == 1
                     and len(text.split()) >= 1):
@@ -1894,7 +2074,8 @@ class CompleteDOCXExtractor:
         r'Autorit[e\xe9]s?\s+canadiennes\s+en\s+valeurs|'        # bilingual org header
         r'^\s*[A-Z]-\s*[A-Z]\+\*?\s*$|'                         # font-size controls "A- A+*"
         r'Type:\s*Rules\s+Bulletin\s*>|'                         # CIRO bulletin metadata header
-        r'Distribute\s+internally\s+to\s*:|'                     # CIRO distribution list
+        r'Distribute\s+internally\s+to\s*:|'                     # CIRO distribution list label
+        r'(?:Corporate\s+Finance|Regulatory\s+Accounting).*(?:Senior\s+Management|Trading\s+Desk)|'  # CIRO distribution list body
         r'Rulebook\s+connection\s*:|'                             # CIRO rulebook reference
         r'Updated\s+on\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}|'  # "Updated on September 15, 2025"
         r'You\s+can\s+find\s+the\s+Canadian\s+Investment\s+Regulatory\s+Organization|'  # CIRO website footer
@@ -2346,7 +2527,7 @@ class CompleteDOCXExtractor:
                     para_data.patterns['inline_fn_positions'] = _fn_pos  # positional injection
             except Exception:
                 pass
-        # Inline (superscript digit) footnote reference detection
+        # Inline (superscript digit or Roman numeral) footnote reference detection
         if self._inline_footnotes:
             try:
                 _W2 = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
@@ -2356,10 +2537,14 @@ class CompleteDOCXExtractor:
                     rpr = r._element.find(_W2 + 'rPr')
                     if rpr is not None:
                         va = rpr.find(_W2 + 'vertAlign')
-                        if va is not None and va.get(_W2 + 'val') == 'superscript' \
-                                and r.text.strip().isdigit():
-                            _fnum = int(r.text.strip())
-                            if _fnum in self._inline_footnotes:
+                        if va is not None and va.get(_W2 + 'val') == 'superscript':
+                            _t = r.text.strip()
+                            _fnum = None
+                            if _t.isdigit():
+                                _fnum = int(_t)
+                            elif _t.lower() in self._ROMAN_MAP:
+                                _fnum = self._ROMAN_MAP[_t.lower()]
+                            if _fnum is not None and _fnum in self._inline_footnotes:
                                 _inline_pos.append((_fnum, self._inline_footnotes[_fnum], _char_pos))
                     _char_pos += len(r.text)
                 if _inline_pos:
@@ -2466,7 +2651,25 @@ class CompleteDOCXExtractor:
                 cell_text = cell.text.strip()
                 has_bold = any(run.bold for para in cell.paragraphs
                                for run in para.runs if run.text.strip())
-                row_data.append({'text': cell_text, 'bold': has_bold})
+                # Extract italic (and bold) spans at run level for EM/BOLD-in-cell rendering
+                italic_spans: list = []
+                _pos = 0
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        if not run.text:
+                            continue
+                        run_len = len(run.text)
+                        if run.italic or run.bold:
+                            # Find run position within cell_text
+                            _idx = cell_text.find(run.text, _pos)
+                            if _idx >= 0:
+                                italic_spans.append({
+                                    'start': _idx, 'end': _idx + run_len,
+                                    'italic': bool(run.italic),
+                                    'bold': bool(run.bold),
+                                })
+                                _pos = _idx + run_len
+                row_data.append({'text': cell_text, 'bold': has_bold, 'italic_spans': italic_spans})
             if row_data:
                 rows.append(row_data)
         has_header = False
@@ -2599,12 +2802,19 @@ class PatternBasedTagger:
         # Skip HL=1 (document title level) and centered paragraphs.
         import re as _re_norm
         _raw_levels = []
+        _raw_levels_bold = []
+        _raw_levels_nonbold = []
         for _p in paragraphs:
             if _p.patterns.get('is_centered', False):
                 continue  # skip centered (title) paragraphs
             _hl = _p.patterns.get('heading_level', 0)
+            _is_bold_p = _p.patterns.get('is_all_bold', False)
             if _hl > 1:   # > 1: skip Heading 1 (document title)
                 _raw_levels.append(_hl)
+                if _is_bold_p:
+                    _raw_levels_bold.append(_hl)
+                else:
+                    _raw_levels_nonbold.append(_hl)
             if _p.style:
                 _m = _re_norm.search(r'heading\s*[#\s]?(\d+)', _p.style, _re_norm.IGNORECASE)
                 if _m:
@@ -2613,12 +2823,40 @@ class PatternBasedTagger:
                         _raw_levels.append(lvl)
         _min_hl = min(_raw_levels) if _raw_levels else 2  # default=2 if no headings
 
+        # Detect "inverted" heading hierarchy: some DOCX authors use lower heading numbers
+        # for sub-sections (bold) and higher numbers for top sections (non-bold).
+        # e.g. CIRO bulletins: Heading #3 non-bold = BLOCK2, Heading #2 bold = BLOCK3.
+        # Detection: bold headings have a strictly lower min level than non-bold headings,
+        # and non-bold headings exist. In that case, anchor BLOCK2 to the non-bold min.
+        _min_bold_hl = min(_raw_levels_bold) if _raw_levels_bold else _min_hl
+        _min_nonbold_hl = min(_raw_levels_nonbold) if _raw_levels_nonbold else _min_hl
+        _inverted_heading = (
+            _raw_levels_nonbold and _raw_levels_bold
+            and _min_bold_hl < _min_nonbold_hl
+        )
+        if _inverted_heading:
+            # Use non-bold min as the BLOCK2 anchor; bold levels map starting from BLOCK3
+            _h2b_nonbold_anchor = _min_nonbold_hl
+            _h2b_bold_anchor = _min_nonbold_hl  # bold at nonbold_min → BLOCK3
+
         # Detect if document has varied heading levels (> 1 distinct level).
         # If ABBYY only reports one heading level, we need context-based BLOCK3 promotion.
         _distinct_levels = len(set(_raw_levels))
 
-        def _h2b(level):
-            """Normalize: lowest heading level → BLOCK2, next → BLOCK3, etc."""
+        def _h2b(level, is_bold=False):
+            """Normalize: lowest heading level → BLOCK2, next → BLOCK3, etc.
+            In inverted-heading docs (bold sub-levels have LOWER heading numbers than
+            non-bold top sections): non-bold _min → BLOCK2, lowest bold level →
+            BLOCK3 (direct child), and all deeper levels use the standard mapping.
+            """
+            if _inverted_heading:
+                if not is_bold:
+                    # Non-bold headings: anchor at _min_nonbold_hl → BLOCK2
+                    return min(max(2, level - _min_nonbold_hl + 2), 6)
+                elif level == _min_bold_hl:
+                    # Lowest bold level = direct child of top section → BLOCK3
+                    return 3
+                # Deeper bold levels: fall through to standard mapping below
             return min(max(2, level - _min_hl + 2), 6)
 
         # ── Pre-pass A: Count bold heading recurrences ────────────────────────
@@ -2854,7 +3092,7 @@ class PatternBasedTagger:
                     para.final_tag = 'P'
                 elif _hl_bold > 0:
                     # Bold heading with known DOCX level — use normalized depth
-                    _blk = _h2b(_hl_bold)
+                    _blk = _h2b(_hl_bold, is_bold=True)
                     # For Notice docs (not Annual Report) where only one heading level
                     # is seen, use context: Title-Case after ALL-CAPS → BLOCK3
                     if (not _is_annual and _distinct_levels <= 1 and _blk == 2
@@ -2915,7 +3153,7 @@ class PatternBasedTagger:
                         or _re_blk.match(r'^[a-z]\.\s', _ts_blk)):
                     _blk_level = 5   # (a), (i), a. → BLOCK5
                 else:
-                    _blk_level = _h2b(level)
+                    _blk_level = _h2b(level, is_bold=False)
                     # For Notice docs: Title-Case heading after ALL-CAPS → BLOCK3
                     if (not _is_annual2 and _distinct_levels <= 1 and _blk_level == 2
                             and _last_block_level == 2 and _last_block_was_caps
@@ -2930,7 +3168,22 @@ class PatternBasedTagger:
                     ))
                 )
                 _is_inline_header2 = para.patterns.get('inline_header', False)
-                if _is_stat_box2 or _is_inline_header2:
+                # Guard: heading-styled paragraphs that are actually legal provision
+                # text (numbered provisions, repealed markers, condition sentences)
+                # should route to P, not BLOCK — prevents TI over-detection in
+                # legislation-within-notice docs (e.g. NFLD Blanket Order appendices).
+                import re as _re_prov
+                _wc_prov = len(_ts_blk.split())
+                _is_provision_text = (
+                    bool(_re_prov.match(r'^\(\d+\)\s+', _ts_blk))         # "(1) X..." numbered provision
+                    or bool(_re_prov.match(r'^\[(?:Rep|Repealed)\.?\s+by\s+', _ts_blk, _re_prov.IGNORECASE))  # repealed marker
+                    or (_wc_prov >= 15 and _ts_blk.endswith('.'))          # long full sentence
+                    or (_wc_prov <= 2 and len(_ts_blk) <= 10)              # fragment (e.g. "es", "Tmx")
+                    or (bool(_re_prov.match(
+                            r'^(?:CIRO|The\s+\w+)\s+(?:must|shall|will|may)\b',
+                            _ts_blk, _re_prov.IGNORECASE)) and _wc_prov >= 8)  # condition text
+                )
+                if _is_stat_box2 or _is_inline_header2 or _is_provision_text:
                     para.final_tag = 'P'
                 else:
                     para.final_tag = f'BLOCK{_blk_level}'
@@ -3090,7 +3343,21 @@ class PatternBasedTagger:
             return True
         if para.patterns.get('has_dash_bullet', False):
             return True
-
+        # DOCX XML list element (w:numPr) without auto-numbered prefix → ITEM
+        # Bullet-format numPr items have no text prefix (label is visual-only);
+        # numbered items get their label prepended by _get_numpr_label and are
+        # routed via P1/P2. Only catch the un-prefixed (bullet) numPr items here.
+        if para.patterns.get('has_numpr', False):
+            import re as _re_np
+            _ts_np = para.text.strip()
+            _no_prefix = not _re_np.match(
+                r'^\([a-z]\)\s|^\([ivxlcdm]+\)\s|^\d+[\.)]\ |^[a-z]\.[\s]',
+                _ts_np, _re_np.IGNORECASE
+            )
+            if _no_prefix:
+                self.context_tracker.in_list = True
+                self.context_tracker.list_indent = para.left_indent
+                return True
 
         if (prev_para and self.context_tracker.check_list_intro(prev_para.text)
                 and not _is_full_sentence):  # colon-intro list: trigger regardless of indent or bold
@@ -3233,35 +3500,64 @@ class PatternBasedTagger:
     def extract_inline_formatting(self, para: 'ParagraphData') -> List[Dict]:
         """
         Extract BOLD and EM from DOCX runs plus 14 regulatory pattern-based EM detections.
+
+        FIX (Apr 2026): anchor each run's position via str.find() on para.text instead of
+        accumulating len(run.text).  When para.text contains characters absent from
+        run.text (hyperlink wrappers, w:noBreakHyphen, w:sym, etc.) the accumulated
+        offset drifts, causing BOLD/EM spans to tag the WRONG text—producing empty
+        parentheses like '()' instead of '(<BOLD>PPM</BOLD>)'.
         """
         formatting = []
-        current_pos = 0
+        para_text = para.text
+        search_pos = 0
         for run in para.runs:
-            run_length = len(run.text)
-            if run_length > 0:
-                if run.bold:
-                    formatting.append({
-                        'start': current_pos,
-                        'end': current_pos + run_length,
-                        'tag': 'BOLD',
-                        'source': 'docx'
-                    })
-                if run.italic:
-                    formatting.append({
-                        'start': current_pos,
-                        'end': current_pos + run_length,
-                        'tag': 'EM',
-                        'source': 'docx'
-                    })
-            current_pos += run_length
+            if not run.text:
+                continue
+            run_text = run.text
+            run_length = len(run_text)
+            # Anchor to actual position in para.text (robust vs hidden Unicode chars)
+            idx = para_text.find(run_text, search_pos)
+            if idx < 0:
+                idx = search_pos  # fallback: keep accumulated position
+            run_start = idx
+            run_end   = idx + run_length
+            if run.bold:
+                formatting.append({
+                    'start': run_start,
+                    'end':   run_end,
+                    'tag':   'BOLD',
+                    'source': 'docx'
+                })
+            if run.italic:
+                formatting.append({
+                    'start': run_start,
+                    'end':   run_end,
+                    'tag':   'EM',
+                    'source': 'docx'
+                })
+            search_pos = run_end
         
         text = para.text
         import re
 
         # Build lookup of already-tagged spans from DOCX runs to avoid double-tagging.
-        def _already_tagged(start: int, end: int) -> bool:
-            return any(f['start'] <= start < f['end'] or start <= f['start'] < end
-                       for f in formatting)
+        # tag-type-aware: BOLD and EM are orthogonal and may coexist at the same span.
+        # Passing tag='' (default) blocks ANY overlap; passing tag='EM' only blocks if
+        # an EM already covers the range (allows BOLD+EM combination spans).
+        def _already_tagged(start: int, end: int, tag: str = '') -> bool:
+            return any(
+                (f['start'] <= start < f['end'] or start <= f['start'] < end)
+                and (not tag or f.get('tag') == tag)
+                for f in formatting
+            )
+
+        def _docx_has_italic(start: int, end: int) -> bool:
+            """Return True if the DOCX has an italic run overlapping [start, end)."""
+            return any(
+                f.get('source') == 'docx' and f.get('tag') == 'EM'
+                and (f['start'] <= start < f['end'] or start <= f['start'] < end)
+                for f in formatting
+            )
 
         # Pattern 1 (RESTORED): Regulatory instrument number references.
         # NI XX-XXX / MI XX-XXX / CP XX-XXX / NP XX-XXX / Staff Notice XX-XXX
@@ -3273,7 +3569,7 @@ class PatternBasedTagger:
                 r'\b(?:NI|MI|CP|NP)\s+\d{2}-\d{3}[A-Z]?'
                 r'|\bStaff\s+(?:Notice|Bulletin)\s+\d{2}-\d{3}[A-Z]?',
                     text):
-                if not _already_tagged(match.start(), match.end()):
+                if not _already_tagged(match.start(), match.end(), 'EM'):
                     formatting.append({
                         'start': match.start(), 'end': match.end(),
                         'tag': 'EM', 'source': 'pattern_ni_mi'
@@ -3285,10 +3581,11 @@ class PatternBasedTagger:
         for match in re.finditer(
             r'\b(?!(?:The|This|An?)\s)[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(Act|Code|Regulation|Loi|R\u00e8glement)\b',
             text):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_act'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_act'
+                })
         
         # Pattern 3: REMOVED - "the Act/Regulation" — vendor uses STATREF/CITE or plain text, not EM
         
@@ -3298,28 +3595,31 @@ class PatternBasedTagger:
         for match in re.finditer(
             r'\b(?:Companion Policy|Blanket Order|Local Policy|Policy Statement)\s+\d+-\d+[A-Z]?\b',
             text, re.IGNORECASE):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_cp_rule'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_cp_rule'
+                })
         
         # Pattern 6: Multilateral Instrument / National Policy with number
         for match in re.finditer(
             r'\b(?:Multilateral Instrument|National Policy|Multilateral Policy)\s+\d+-\d+[A-Z]?\b',
             text, re.IGNORECASE):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_mi_np'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_mi_np'
+                })
         
         # Pattern 7: Named Acts with RSO / RSC citation  e.g. Securities Act, RSO 1990
         for match in re.finditer(
             r'\b[A-Z][a-zA-Z ]{3,60}(?:Act|Code)\s*,\s*R[SO]C?\s*\d+',
             text):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_act_rso'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_act_rso'
+                })
         
         # Pattern 8: REMOVED - Quoted titles (too aggressive; EM-tags defined terms like "Agent for Service")
         
@@ -3332,19 +3632,21 @@ class PatternBasedTagger:
             r'\b(?:R\u00e8glement|Instruction\s+g\u00e9n\u00e9rale|'
             r'Avis\s+g\u00e9n\u00e9ral|Norme|Politique)\s+\d+-\d+[A-Z]?\b',
             text, re.IGNORECASE):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_french_reg'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_french_reg'
+                })
         
         # Pattern 12: Policy Statement to Regulation/Rule XX-XXX
         for match in re.finditer(
             r'\bPolicy Statement\s+to\s+(?:Regulation|Rule|NI|MI)\s+\d+-\d+[A-Z]?\b',
             text, re.IGNORECASE):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_policy_stmt'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_policy_stmt'
+                })
         
         # Pattern 13: Well-known statute names without citation number
         for match in re.finditer(
@@ -3353,37 +3655,43 @@ class PatternBasedTagger:
             r'Financial Services Regulatory Authority of Ontario Act|'
             r'Investment Funds Act|Commodity Futures Act)\b',
             text):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_named_act'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_named_act'
+                })
         
         # Pattern 14: Subsection / paragraph / clause references  e.g. subsection 3(1)
+        # Only fires when the DOCX itself has italic at that span (avoids over-tagging
+        # in docs like Ontario/11-503 where subsection refs are NOT italicized in DOCX).
         for match in re.finditer(
             r'\b(?:subsection|paragraph|clause|subclause)\s+\d+(?:\.\d+)?\s*\(\w+\)',
             text, re.IGNORECASE):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_subsection'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM') and _docx_has_italic(match.start(), match.end()):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_subsection'
+                })
         
         # Pattern 15: Email addresses — vendor consistently italicizes emails in contact sections
         for match in re.finditer(
             r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}',
             text):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_email'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_email'
+                })
         
         # Pattern 16: URLs — vendor consistently italicizes URLs in reference sections
         for match in re.finditer(
             r'https?://[^\s<>"]+',
             text):
-            formatting.append({
-                'start': match.start(), 'end': match.end(),
-                'tag': 'EM', 'source': 'pattern_url'
-            })
+            if not _already_tagged(match.start(), match.end(), 'EM'):
+                formatting.append({
+                    'start': match.start(), 'end': match.end(),
+                    'tag': 'EM', 'source': 'pattern_url'
+                })
         
         return formatting
 
@@ -4192,7 +4500,7 @@ class SGMLGenerator:
         ('\u201c', '&ldquo;'),   # "
         ('\u201d', '&rdquo;'),   # "
         ('\u2018', '&lsquo;'),   # '
-        ('\u2019', '&rsquo;'),   # '
+        ('\u2019', "'"),        # ' right single quote → plain apostrophe
         ('\u2014', '&mdash;'),   # — em-dash
         ('\u2013', '&mdash;'),   # – en-dash → mdash (business rule: all dashes are &mdash;)
         ('\u2012', '&mdash;'),   # figure dash → mdash
@@ -4302,6 +4610,7 @@ class SGMLGenerator:
         self.vendor_date_override = None       # When set, use this DATE value in POLIDENT (string)
         self.vendor_date_label_override = None # When set, use as LABEL attr for DATE tag (or None for no label)
         self.vendor_label_override = None      # When set, use as LABEL attr on POLIDOC element
+        self.jurisdiction = ''           # Set by pipeline to enable jurisdiction-specific EM patterns in table cells
 
     def set_images(self, images: List['ImageData']):
         self.images = images
@@ -6201,7 +6510,9 @@ class SGMLGenerator:
         return result
 
     def _apply_inline_formatting(self, para: 'ParagraphData') -> str:
-        """Apply inline BOLD/EM tags with entity-safe segmentation."""
+        """Apply inline BOLD/EM tags with entity-safe segmentation.
+        Handles co-located BOLD+EM spans (bold+italic DOCX runs) by emitting
+        <EM><BOLD>text</BOLD></EM> per vendor convention."""
         inline = para.inline_formatting
         if not inline:
             return self.convert_entities(para.text)
@@ -6210,7 +6521,26 @@ class SGMLGenerator:
         if not inline:
             return self.convert_entities(para.text)
 
-        inline = sorted(inline, key=lambda x: x.get('start', 0))
+        # Merge co-located BOLD+EM entries (same start+end) into a single EM_BOLD span
+        # Vendor convention: <BOLD><EM>text</EM></BOLD> (BOLD is outer wrapper)
+        from collections import defaultdict as _dd
+        _span_tags = _dd(set)
+        for f in inline:
+            _span_tags[(f.get('start', 0), f.get('end', len(para.text)))].add(f.get('tag', ''))
+        _merged = []
+        _seen = set()
+        for f in inline:
+            key = (f.get('start', 0), f.get('end', len(para.text)))
+            if key in _seen:
+                continue
+            _seen.add(key)
+            tags = _span_tags[key]
+            if 'BOLD' in tags and 'EM' in tags:
+                _merged.append({'start': key[0], 'end': key[1], 'tag': 'EM_BOLD'})
+            else:
+                _merged.append({'start': key[0], 'end': key[1], 'tag': next(iter(tags))})
+        inline = sorted(_merged, key=lambda x: x.get('start', 0))
+
         segments = []
         pos = 0
 
@@ -6236,12 +6566,129 @@ class SGMLGenerator:
         for seg in segments:
             if seg['type'] == 'text':
                 result.append(seg['content'])
+            elif seg['tag'] == 'EM_BOLD':
+                result.append(f"<BOLD><EM>{seg['content']}</EM></BOLD>")
             else:
                 result.append(f"<{seg['tag']}>{seg['content']}</{seg['tag']}>")
 
         return ''.join(result)
 
     # ─── TABLE GENERATION ──────────────────────────────────────────────────────
+    def _render_cell_content(self, cell: dict) -> str:
+        """
+        Render table cell text with BOLD/EM markup.
+        If the cell carries run-level italic_spans from DOCX extraction, use those
+        (direct DOCX fidelity). Otherwise falls back to pattern-based EM detection.
+        Returns entity-converted text with inline tags; does NOT wrap in BOLD (caller does).
+        """
+        text = cell.get('text', '')
+        if not text:
+            return ''
+        italic_spans = cell.get('italic_spans')
+        if italic_spans:
+            # Apply DOCX-run italic/bold spans directly to the cell text
+            # Collect all formatting spans, sort by start
+            spans = sorted(italic_spans, key=lambda s: s['start'])
+            result = []
+            pos = 0
+            for sp in spans:
+                s, e = sp['start'], sp.get('end', sp['start'])
+                if s >= len(text):
+                    break
+                e = min(e, len(text))
+                if s > pos:
+                    result.append(self.convert_entities(text[pos:s]))
+                seg_text = self.convert_entities(text[s:e])
+                is_italic = sp.get('italic', False)
+                is_bold   = sp.get('bold', False)
+                if is_italic and is_bold:
+                    result.append(f'<BOLD><EM>{seg_text}</EM></BOLD>')
+                elif is_italic:
+                    result.append(f'<EM>{seg_text}</EM>')
+                elif is_bold:
+                    result.append(f'<BOLD>{seg_text}</BOLD>')
+                else:
+                    result.append(seg_text)
+                pos = e
+            if pos < len(text):
+                result.append(self.convert_entities(text[pos:]))
+            return ''.join(result)
+        else:
+            # No run-level data: fall back to pattern-based EM detection
+            return self._apply_em_patterns_to_cell_text(text)
+
+    def _apply_em_patterns_to_cell_text(self, text: str) -> str:
+        """
+        Apply pattern-based EM detection to table cell raw text.
+        Returns entity-converted text with <EM> tags wrapping matched spans.
+        Same as PatternBasedTagger patterns but applied to plain text (no run.italic).
+        Used instead of convert_entities() for table cell content.
+        """
+        if not text:
+            return text
+
+        # Collect all EM spans (non-overlapping, first match wins)
+        em_spans = []
+
+        def _add_if_not_overlapping(start, end):
+            for s, e in em_spans:
+                if start < e and end > s:
+                    return  # overlaps existing
+            em_spans.append((start, end))
+
+        jur = self.jurisdiction.lower() if self.jurisdiction else ''
+
+        # Pattern 1: NI/MI/CP/NP refs (non-Ontario only — Ontario uses plain text)
+        if jur != 'ontario':
+            for m in re.finditer(
+                r'\b(?:NI|MI|CP|NP)\s+\d{2}-\d{3}[A-Z]?'
+                r'|\bStaff\s+(?:Notice|Bulletin)\s+\d{2}-\d{3}[A-Z]?',
+                text):
+                _add_if_not_overlapping(m.start(), m.end())
+
+        # Pattern 2: Title-case Act/Code/Regulation names
+        for m in re.finditer(
+            r'\b(?!(?:The|This|An?)\s)[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+'
+            r'(?:Act|Code|Regulation|Loi|R\u00e8glement)\b',
+            text):
+            _add_if_not_overlapping(m.start(), m.end())
+
+        # Pattern 5: Companion Policy / Blanket Order with number
+        for m in re.finditer(
+            r'\b(?:Companion Policy|Blanket Order|Local Policy|Policy Statement)\s+\d+-\d+[A-Z]?\b',
+            text, re.IGNORECASE):
+            _add_if_not_overlapping(m.start(), m.end())
+
+        # Pattern 6: Multilateral Instrument / National Policy with number
+        for m in re.finditer(
+            r'\b(?:Multilateral Instrument|National Policy|Multilateral Policy)\s+\d+-\d+[A-Z]?\b',
+            text, re.IGNORECASE):
+            _add_if_not_overlapping(m.start(), m.end())
+
+        # Pattern 7: Named Acts with RSO/RSC citation
+        for m in re.finditer(
+            r'\b[A-Z][a-zA-Z ]{3,60}(?:Act|Code)\s*,\s*R[SO]C?\s*\d+',
+            text):
+            _add_if_not_overlapping(m.start(), m.end())
+
+        if not em_spans:
+            return self.convert_entities(text)
+
+        # Build output with EM tags
+        em_spans.sort()
+        result = []
+        pos = 0
+        for start, end in em_spans:
+            if start < pos:
+                continue  # already consumed (shouldn't happen due to non-overlap check)
+            if start > pos:
+                result.append(self.convert_entities(text[pos:start]))
+            result.append(f'<EM>{self.convert_entities(text[start:end])}</EM>')
+            pos = end
+        if pos < len(text):
+            result.append(self.convert_entities(text[pos:]))
+        return ''.join(result)
+
     def _generate_table_sgml(self, table: 'TableData') -> str:
         """
         Generate Carswell-standard TABLE SGML.
@@ -6293,10 +6740,10 @@ class SGMLGenerator:
             for row in header_rows:
                 sgml.append('<TBLROW ROWSEP="HSINGLE">')
                 for col_idx, cell in enumerate(row):
-                    cell_text  = self.convert_entities(cell['text'])
-                    bold_open  = '<BOLD>' if cell.get('bold') else ''
-                    bold_close = '</BOLD>' if cell.get('bold') else ''
-                    sgml.append(f'<TBLCELL COLSTART="{col_idx + 1}">{bold_open}{cell_text}{bold_close}</TBLCELL>')
+                    cell_content = self._render_cell_content(cell)
+                    bold_open  = '<BOLD>' if cell.get('bold') and not cell.get('italic_spans') else ''
+                    bold_close = '</BOLD>' if cell.get('bold') and not cell.get('italic_spans') else ''
+                    sgml.append(f'<TBLCELL COLSTART="{col_idx + 1}">{bold_open}{cell_content}{bold_close}</TBLCELL>')
                 sgml.append('</TBLROW>')
             sgml.append('</TBLROWS>')
             sgml.append('</TBLHEAD>')
@@ -6318,10 +6765,10 @@ class SGMLGenerator:
             row_sep = ' ROWSEP="HSINGLE"' if r_idx == 0 and not header_rows else ''
             sgml.append(f'<TBLROW{row_sep}>')
             for col_idx, cell in enumerate(row):
-                cell_text  = self.convert_entities(cell['text'])
-                bold_open  = '<BOLD>' if cell.get('bold') else ''
-                bold_close = '</BOLD>' if cell.get('bold') else ''
-                sgml.append(f'<TBLCELL COLSTART="{col_idx + 1}">{bold_open}{cell_text}{bold_close}</TBLCELL>')
+                cell_content = self._render_cell_content(cell)
+                bold_open  = '<BOLD>' if cell.get('bold') and not cell.get('italic_spans') else ''
+                bold_close = '</BOLD>' if cell.get('bold') and not cell.get('italic_spans') else ''
+                sgml.append(f'<TBLCELL COLSTART="{col_idx + 1}">{bold_open}{cell_content}{bold_close}</TBLCELL>')
             sgml.append('</TBLROW>')
 
         sgml.append('</TBLROWS>')
@@ -6419,9 +6866,9 @@ class SGMLGenerator:
                     if is_contraction or is_possessive:
                         result.append("'")   # plain apostrophe for contractions
                     else:
-                        result.append('&rsquo;')
+                        result.append("'")   # plain apostrophe (DTD has no &rsquo;)
                 else:
-                    result.append('&rsquo;')
+                    result.append("'")       # plain apostrophe (DTD has no &rsquo;)
             elif char == "'":
                 result.append(char)   # plain ASCII apostrophe: leave as-is
             else:
@@ -6564,7 +7011,7 @@ class CompletePipeline:
 
         # Step 3: Extract DOCX
         print("\n3️⃣ Extracting DOCX (v5.0: cover/TOC/metadata improvements)...")
-        extractor = CompleteDOCXExtractor(docx_path)
+        extractor = CompleteDOCXExtractor(docx_path, pdf_path=pdf_path)
         extractor._preserve_data_tables = self.preserve_data_tables  # pass through flag
         doc_data = extractor.extract_complete_document()
 
@@ -6618,6 +7065,8 @@ class CompletePipeline:
         self.pattern_tagger.jurisdiction = (
             _juri_m.group(1).rstrip('_') if _juri_m else ''
         )
+        # Propagate jurisdiction to SGMLGenerator for table-cell EM pattern detection
+        self.sgml_generator.jurisdiction = self.pattern_tagger.jurisdiction
         print(f"   Jurisdiction: {self.pattern_tagger.jurisdiction or '(unknown)'}")
         print('\n   📝 Extracting DOCX formatting (base for hybrid)...')
         for para in confirmed + ambiguous:
