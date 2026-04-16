@@ -51,13 +51,13 @@ print(f"ðŸ“… {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # ABBYY â€” disabled in container (no Windows COM server on Linux).
 ABBYY_CONFIG = {
-    'customer_id': os.getenv('ABBYY_CUSTOMER_ID', ''),
-    'license_path': os.getenv('ABBYY_LICENSE_PATH', ''),
-    'license_password': os.getenv('ABBYY_LICENSE_PASSWORD', ''),
+    'customer_id': os.getenv('ABBYY_CUSTOMER_ID', 'FFvrEyp5Gz8sXSwP98N9'),
+    'license_path': os.getenv('ABBYY_LICENSE_PATH', ''),           # Windows-only, N/A in Docker
+    'license_password': os.getenv('ABBYY_LICENSE_PASSWORD', '/80HjebrjO2bzpJUiJ/DwQ=='),
 }
 
 # Thomson Reuters AI Platform
-WORKSPACE_ID    = os.getenv('WORKSPACE_ID', '')
+WORKSPACE_ID    = os.getenv('WORKSPACE_ID', 'Saikumar3Y0Z')
 TR_AUTH_URL     = os.getenv('TR_AUTH_URL', 'https://aiplatform.gcs.int.thomsonreuters.com/v1/anthropic/token')
 ANTHROPIC_MODEL = os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-5-20250929')
 OPUS_MODEL      = os.getenv('OPUS_MODEL', 'claude-opus-4-20250514')

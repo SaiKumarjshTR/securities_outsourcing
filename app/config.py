@@ -9,7 +9,7 @@ TR_AUTH_URL: str = os.getenv(
     "TR_AUTH_URL",
     "https://aiplatform.gcs.int.thomsonreuters.com/v1/anthropic/token",
 )
-WORKSPACE_ID: str = os.getenv("WORKSPACE_ID", "")
+WORKSPACE_ID: str = os.getenv("WORKSPACE_ID", "Saikumar3Y0Z")
 ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 OPUS_MODEL: str = os.getenv("OPUS_MODEL", "claude-opus-4-20250514")
 
