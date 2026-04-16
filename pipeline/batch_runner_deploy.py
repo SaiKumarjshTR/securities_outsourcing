@@ -1,4 +1,4 @@
-﻿# ====== CODE CELL 0 â€” DEPLOYMENT VERSION ======
+# ====== CODE CELL 0 â€” DEPLOYMENT VERSION ======
 # batch_runner_deploy.py â€” Linux/Docker safe deployment build.
 # All Windows-specific paths replaced with env-var driven config.
 # win32com (ABBYY) guarded with try/except â€” returns None on Linux.
@@ -164,7 +164,7 @@ def load_complete_keying_specifications(rules_path: str) -> str:
         print("   Using placeholder - UPDATE PATH IN CELL 2!")
         return "PLACEHOLDER - Update PATHS['keying_rules'] with correct path to COMPLETE_KEYING_RULES_VERIFIED.txt"
     
-    with open(rules_path, 'r', encoding='utf-8') as f:
+    with open(rules_path, 'r', encoding='utf-8-sig') as f:
         specs = f.read()
     
     # Verify completeness
@@ -267,7 +267,7 @@ class RAGManager:
     # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _index_keying_rules(self) -> None:
-        with open(self.keying_specs_path, 'r', encoding='utf-8') as fh:
+        with open(self.keying_specs_path, 'r', encoding='utf-8-sig') as fh:
             text = fh.read()
 
         # Split on 2+ blank lines (section boundaries)
@@ -286,7 +286,7 @@ class RAGManager:
         if os.path.exists(kv_path):
             try:
                 import json as _json
-                with open(kv_path, 'r', encoding='utf-8') as fkv:
+                with open(kv_path, 'r', encoding='utf-8-sig') as fkv:
                     kv = _json.load(fkv)
                 kv_counter = len(ids)
                 def _flatten_kv(obj, prefix=''):
