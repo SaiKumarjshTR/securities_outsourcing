@@ -284,7 +284,7 @@ else:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — Excel Upload (placeholder)
+# SECTION 2 — Excel Upload
 # ════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.markdown("#### 📊 Upload Excel File")
@@ -295,13 +295,73 @@ uploaded_excel = st.file_uploader(
     key="excel_uploader",
 )
 
-if uploaded_excel is not None:
-    file_size_mb = len(uploaded_excel.getvalue()) / (1024 * 1024)
-    st.success(f"📊 **{uploaded_excel.name}** — {file_size_mb:.2f} MB received")
-    st.warning(
-        "⏳  Excel → SGML processing code is coming **tomorrow**. "
-        "Your file has been received and will be processed once the "
-        "Excel pipeline is deployed."
-    )
+if uploaded_excel is None:
+    st.info("👆 Please upload an Excel file (.xlsx / .xls) to begin conversion")
 else:
-    st.info("📊 Excel → SGML conversion — **Coming Soon**")
+    file_size_mb = len(uploaded_excel.getvalue()) / (1024 * 1024)
+    st.success(f"📊 **{uploaded_excel.name}** — {file_size_mb:.2f} MB uploaded")
+
+    excel_doc_name = Path(uploaded_excel.name).stem
+
+    col_btn2, col_note2 = st.columns([1, 4])
+    with col_btn2:
+        excel_btn = st.button("⚙️ Process Document", type="primary", key="convert_excel")
+    with col_note2:
+        st.caption("Excel → SGML conversion using rule-based pipeline (no AI required).")
+
+    if excel_btn:
+        st.session_state.processing_count += 1
+        progress_bar2 = st.progress(0, text="Initialising Excel pipeline…")
+        status_box2   = st.empty()
+
+        excel_tmp = tempfile.mkdtemp(prefix="excel_plp_")
+        try:
+            # Write uploaded Excel to temp dir
+            xlsx_path = os.path.join(excel_tmp, uploaded_excel.name)
+            sgm_path  = os.path.join(excel_tmp, excel_doc_name + ".sgm")
+            with open(xlsx_path, "wb") as fh:
+                fh.write(uploaded_excel.getvalue())
+
+            progress_bar2.progress(30, text="Converting Excel → SGML…")
+            status_box2.info("⏳  Running Excel → SGML conversion…")
+
+            # Load converter from pipeline folder
+            pipeline_dir = str(Path(__file__).parent / "pipeline")
+            if pipeline_dir not in sys.path:
+                sys.path.insert(0, pipeline_dir)
+
+            from excel_batch_converter import convert_single
+            convert_single(xlsx_path, sgm_path)
+
+            st.session_state.processing_count = max(0, st.session_state.processing_count - 1)
+            progress_bar2.progress(100, text="Done!")
+            status_box2.empty()
+            progress_bar2.empty()
+
+            if os.path.exists(sgm_path):
+                sgml_text = Path(sgm_path).read_text(encoding="utf-8", errors="replace")
+                col_a2, col_b2 = st.columns([2, 3])
+                with col_a2:
+                    st.success("✅ Excel → SGML conversion complete!")
+                    st.metric("SGML size", f"{len(sgml_text):,} chars")
+                with col_b2:
+                    st.download_button(
+                        label=f"⬇️  Download  {excel_doc_name}.sgm",
+                        data=sgml_text,
+                        file_name=f"{excel_doc_name}.sgm",
+                        mime="text/plain",
+                        use_container_width=True,
+                    )
+                with st.expander("🔍 Preview SGML output (first 3 000 characters)"):
+                    st.code(sgml_text[:3000], language="xml")
+            else:
+                st.error("❌ Conversion ran but no SGML file was produced.")
+
+        except Exception as exc:
+            st.session_state.processing_count = max(0, st.session_state.processing_count - 1)
+            progress_bar2.empty()
+            status_box2.empty()
+            st.error(f"❌ Excel pipeline error: {exc}")
+
+        finally:
+            shutil.rmtree(excel_tmp, ignore_errors=True)
