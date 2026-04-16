@@ -66,7 +66,7 @@ def _install_win32com_stub() -> None:
 _install_win32com_stub()
 
 # ── Load the monolithic pipeline script ──────────────────────────────────────
-_PIPELINE_SCRIPT = Path(__file__).parent.parent / "pipeline" / "batch_runner_standalone.py"
+_PIPELINE_SCRIPT = Path(__file__).parent.parent / "pipeline" / "batch_runner_deploy.py"
 
 _pipeline_ns: Dict[str, Any] = {}
 _initialized = False
@@ -120,6 +120,7 @@ def run_pipeline(docx_bytes: bytes, doc_name: str) -> Dict[str, Any]:
     from app import config  # Import here to avoid circular imports
 
     # Create an isolated temp directory for this request
+    os.makedirs(config.TEMP_DIR, exist_ok=True)  # ensure base dir exists (not created by Docker)
     tmp_dir = tempfile.mkdtemp(prefix=f"sgml_{doc_name}_", dir=config.TEMP_DIR)
     os.makedirs(tmp_dir, exist_ok=True)
 

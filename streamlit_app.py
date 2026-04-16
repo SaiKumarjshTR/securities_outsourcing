@@ -18,6 +18,14 @@ from pathlib import Path
 
 import streamlit as st
 
+# ── Session manager (multi-user isolation) ────────────────────────────────────
+try:
+    sys.path.insert(0, str(Path(__file__).parent / "app"))
+    from session_manager import SessionManager
+    _session_mgr: SessionManager | None = SessionManager()
+except Exception:
+    _session_mgr = None
+
 # ── Page config MUST be called first ─────────────────────────────────────────
 st.set_page_config(
     page_title="Pending Legislative Processor",
@@ -202,7 +210,7 @@ else:
 
     col_btn, col_note = st.columns([1, 4])
     with col_btn:
-        convert_btn = st.button("⚙️ Convert to SGML", type="primary", key="convert_pdf")
+        convert_btn = st.button("⚙️ Process Document", type="primary", key="convert_pdf")
     with col_note:
         if is_pdf:
             st.caption("PDF will be converted to DOCX via pdf2docx, then to SGML.")
