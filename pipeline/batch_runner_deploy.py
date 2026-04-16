@@ -99,7 +99,17 @@ RAG_CONFIG = {
     'persist_dir': os.getenv('RAG_PERSIST_DIR', '/app/data/chroma_db'),
     'n_rules':     int(os.getenv('RAG_N_RULES', '12')),
     'n_examples':  int(os.getenv('RAG_N_EXAMPLES', '25')),
-    'vendor_sgms': _discover_vendor_sgms(_VENDOR_SGMS_DIR),   'has_italic_formatting':  ['EM_AGENT'],
+    'vendor_sgms': _discover_vendor_sgms(_VENDOR_SGMS_DIR),
+}
+
+AGENT_CONFIG = {
+    'orchestrator':       {'model': OPUS_MODEL, 'temperature': 0.0, 'max_tokens': 4096},
+    'specialized_agents': {'model': OPUS_MODEL, 'temperature': 0.0, 'max_tokens': 4096},
+    'validator':          {'model': OPUS_MODEL, 'temperature': 0.0, 'max_tokens': 2048},
+    'enable_parallel':    True,
+    'agent_routing_rules': {
+        'has_bold_formatting':    ['BOLD_AGENT'],
+        'has_italic_formatting':  ['EM_AGENT'],
         'has_bullet_or_indent':   ['ITEM_AGENT'],
         'is_heading_style':       ['BLOCK_AGENT'],
         'contains_email':         ['EM_AGENT'],
