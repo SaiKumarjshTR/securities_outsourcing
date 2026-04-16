@@ -7791,9 +7791,26 @@ class CompletePipeline:
         self.rag_manager = None
 
     def initialize(self):
+        global client, auth_config, KEYING_SPECIFICATIONS
+
         print("\n" + "="*80)
-        print("ðŸš€ INITIALIZING PIPELINE v7.0  (Agentic Multi-LLM)")
+        print("INITIALIZING PIPELINE v7.0  (Agentic Multi-LLM)")
         print("="*80)
+
+        # Lazy auth: authenticate now if deferred at module load
+        if client is None and SYSTEM_CONFIG.get('use_llm', True) and WORKSPACE_ID:
+            print("Authenticating with TR platform...")
+            auth_config = authenticate_tr_platform(WORKSPACE_ID)
+            if auth_config:
+                client = Anthropic(api_key=auth_config['token'])
+                print("Anthropic client ready!")
+            else:
+                print("Auth failed - LLM will be disabled for this request")
+
+        # Lazy keying specs: load now if deferred at module load
+        if not KEYING_SPECIFICATIONS:
+            print("Loading keying specifications...")
+            KEYING_SPECIFICATIONS = load_complete_keying_specifications(PATHS['keying_rules'])
 
         # ABBYY
         try:
@@ -7803,9 +7820,9 @@ class CompletePipeline:
                 ABBYY_CONFIG['license_password']
             )
             self.abbyy.initialize()
-            print("âœ… ABBYY ready")
+            print("ABBYY ready")
         except Exception as e:
-            print(f"âš ï¸  ABBYY failed: {e}")
+            print(f"ABBYY unavailable (Linux/Docker): {e}")
             self.abbyy = None
 
         # RAG
@@ -7820,27 +7837,27 @@ class CompletePipeline:
                     n_examples=RAG_CONFIG['n_examples']
                 )
                 self.rag_manager.initialize()
-                print("âœ… RAG ready")
+                print("RAG ready")
             except Exception as e:
-                print(f"âš ï¸  RAG failed: {e}")
+                print(f"RAG failed: {e}")
                 self.rag_manager = None
 
-        # Sequential LLM Layer v14 (Structure â†’ Inline â†’ Validate)
+        # Sequential LLM Layer v14 (Structure -> Inline -> Validate)
         if client and SYSTEM_CONFIG['use_llm']:
             self.llm_layer = SequentialSGMLLayer(
                 client, KEYING_SPECIFICATIONS, rag_manager=self.rag_manager
             )
-            print(f"âœ… SequentialSGMLLayer v14 ready  (model: {self.llm_layer.model})")
+            print(f"SequentialSGMLLayer v14 ready  (model: {self.llm_layer.model})")
         else:
-            print("âš ï¸  LLM disabled")
+            self.llm_layer = None
+            print("LLM disabled - rule-based fallback only")
 
         # Images
         if SYSTEM_CONFIG['extract_images']:
             self.image_extractor = ImageExtractor(PATHS['output_dir'], SYSTEM_CONFIG['image_dpi'])
-            print("âœ… Image extractor ready")
+            print("Image extractor ready")
 
         print("="*80)
-
     def convert(self, pdf_path: str) -> Dict[str, Any]:
         """Convert PDF to SGML with ALL 3 PHASES + v7.0 agentic accuracy improvements."""
         pdf_name = Path(pdf_path).stem
