@@ -1,5 +1,5 @@
 """
-Pending Legislative Processor — Streamlit UI
+Securities Commission Conversion — Streamlit UI
 =============================================
 AI-powered PDF/DOCX → SGML conversion for TR Securities Outsourcing.
 
@@ -28,7 +28,7 @@ except Exception:
 
 # ── Page config MUST be called first ─────────────────────────────────────────
 st.set_page_config(
-    page_title="Pending Legislative Processor",
+    page_title="Securities Commission Conversion",
     page_icon="📄",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -177,7 +177,7 @@ def _pdf_to_docx(pdf_path: str, docx_path: str) -> bool:
 
 
 # ── Main content ──────────────────────────────────────────────────────────────
-st.markdown("# 📄 Pending Legislative Processor")
+st.markdown("# 📄 Securities Commission Conversion")
 st.markdown(
     "<p style='color:#6b7685; margin-top:-0.5rem;'>"
     "AI-powered text extraction and verification for legislative documents"
