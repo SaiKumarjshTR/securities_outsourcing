@@ -81,7 +81,7 @@ def _load_pipeline() -> None:
             f"Pipeline script not found: {_PIPELINE_SCRIPT}\n"
             "Copy batch_runner_standalone.py into the pipeline/ directory."
         )
-    src = _PIPELINE_SCRIPT.read_text(encoding="utf-8", errors="replace")
+    src = _PIPELINE_SCRIPT.read_text(encoding="utf-8-sig", errors="replace")
     code = compile(src, str(_PIPELINE_SCRIPT), "exec")
     exec(code, _pipeline_ns)  # noqa: S102
     _initialized = True
