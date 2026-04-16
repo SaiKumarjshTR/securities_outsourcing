@@ -208,14 +208,81 @@ else:
 
     doc_name = Path(uploaded_pdf.name).stem
 
-    col_btn, col_note = st.columns([1, 4])
+    col_btn, col_btn2, col_note = st.columns([1, 1, 3])
     with col_btn:
         convert_btn = st.button("⚙️ Process Document", type="primary", key="convert_pdf")
+    with col_btn2:
+        extract_btn = st.button("🖼️ Extract Images", key="extract_images", disabled=not is_pdf)
     with col_note:
         if is_pdf:
-            st.caption("PDF will be converted to DOCX via pdf2docx, then to SGML.")
+            st.caption("Process → SGML. Extract Images → greyscale BMP ZIP (SB100001.BMP…)")
         else:
             st.caption("DOCX will be processed directly by the SGML pipeline.")
+
+    # ── Extract Images handler ──────────────────────────────────────────────
+    if extract_btn and is_pdf:
+        progress_img = st.progress(0, text="Opening PDF…")
+        status_img   = st.empty()
+        img_tmp = tempfile.mkdtemp(prefix="imgext_")
+        try:
+            import io
+            import zipfile as _zipfile
+            import fitz
+            from PIL import Image as _PILImage
+
+            pdf_path_img = os.path.join(img_tmp, uploaded_pdf.name)
+            with open(pdf_path_img, "wb") as fh:
+                fh.write(uploaded_pdf.getvalue())
+
+            status_img.info("⏳ Scanning PDF for images…")
+            _doc = fitz.open(pdf_path_img)
+            extracted, counter, total_pages = [], 1, len(_doc)
+
+            for page_num, page in enumerate(_doc):
+                progress_img.progress(
+                    int((page_num + 1) / total_pages * 80),
+                    text=f"Scanning page {page_num + 1}/{total_pages}…",
+                )
+                for img_info in page.get_images(full=True):
+                    xref = img_info[0]
+                    try:
+                        base_img  = _doc.extract_image(xref)
+                        pil_img   = _PILImage.open(io.BytesIO(base_img["image"]))
+                        pil_img   = pil_img.convert("L")  # greyscale
+                        bmp_name  = f"SB1{counter:05d}.BMP"
+                        bmp_path  = os.path.join(img_tmp, bmp_name)
+                        pil_img.save(bmp_path, format="BMP", dpi=(300, 300))
+                        extracted.append(bmp_path)
+                        counter  += 1
+                    except Exception:
+                        pass
+            _doc.close()
+
+            progress_img.progress(90, text="Building ZIP…")
+            if not extracted:
+                status_img.empty(); progress_img.empty()
+                st.warning("⚠️ No images found in this PDF.")
+            else:
+                zip_buf = io.BytesIO()
+                with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+                    for bp in extracted:
+                        zf.write(bp, arcname=Path(bp).name)
+                zip_buf.seek(0)
+                progress_img.progress(100, text="Done!")
+                status_img.empty(); progress_img.empty()
+                st.success(f"✅ Extracted **{len(extracted)}** image(s) — greyscale BMP, 300 dpi")
+                st.download_button(
+                    label=f"⬇️  Download  {doc_name}_images.zip",
+                    data=zip_buf.getvalue(),
+                    file_name=f"{doc_name}_images.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
+        except Exception as exc:
+            progress_img.empty(); status_img.empty()
+            st.error(f"❌ Image extraction error: {exc}")
+        finally:
+            shutil.rmtree(img_tmp, ignore_errors=True)
 
     if convert_btn:
         st.session_state.processing_count += 1
@@ -367,117 +434,3 @@ else:
             shutil.rmtree(excel_tmp, ignore_errors=True)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — Extract Images from PDF → BMP ZIP
-# ════════════════════════════════════════════════════════════════════════════
-st.markdown("---")
-st.markdown("#### 🖼️ Extract Images from PDF")
-st.caption(
-    "Extracts all images from a PDF, converts them to greyscale BMP at 300 dpi, "
-    "names them SB100001.BMP, SB100002.BMP … and downloads them as a ZIP."
-)
-
-uploaded_img_pdf = st.file_uploader(
-    "Choose a PDF file to extract images from",
-    type=["pdf"],
-    key="img_pdf_uploader",
-)
-
-if uploaded_img_pdf is None:
-    st.info("👆 Please upload a PDF file to extract images")
-else:
-    file_size_mb = len(uploaded_img_pdf.getvalue()) / (1024 * 1024)
-    st.success(f"📄 **{uploaded_img_pdf.name}** — {file_size_mb:.2f} MB uploaded")
-
-    img_doc_name = Path(uploaded_img_pdf.name).stem
-
-    col_img_btn, col_img_note = st.columns([1, 4])
-    with col_img_btn:
-        extract_btn = st.button("🖼️ Extract Images", type="primary", key="extract_images")
-    with col_img_note:
-        st.caption(
-            f"Images will be saved as SB100001.BMP, SB100002.BMP … "
-            f"and downloaded as **{img_doc_name}_images.zip**"
-        )
-
-    if extract_btn:
-        progress_img = st.progress(0, text="Opening PDF…")
-        status_img   = st.empty()
-
-        img_tmp = tempfile.mkdtemp(prefix="imgext_")
-        try:
-            import io
-            import zipfile as _zipfile
-            import fitz  # PyMuPDF
-            from PIL import Image as _PILImage
-
-            # Write PDF to temp file
-            pdf_path_img = os.path.join(img_tmp, uploaded_img_pdf.name)
-            with open(pdf_path_img, "wb") as fh:
-                fh.write(uploaded_img_pdf.getvalue())
-
-            status_img.info("⏳ Scanning PDF for images…")
-            doc = fitz.open(pdf_path_img)
-
-            extracted = []
-            counter   = 1
-
-            total_pages = len(doc)
-            for page_num, page in enumerate(doc):
-                progress_img.progress(
-                    int((page_num + 1) / total_pages * 80),
-                    text=f"Scanning page {page_num + 1}/{total_pages}…",
-                )
-                for img_info in page.get_images(full=True):
-                    xref = img_info[0]
-                    try:
-                        base_img  = doc.extract_image(xref)
-                        img_bytes = base_img["image"]
-
-                        # Open with Pillow, convert to greyscale, set 300 dpi
-                        pil_img = _PILImage.open(io.BytesIO(img_bytes))
-                        pil_img = pil_img.convert("L")          # greyscale (no colour)
-
-                        bmp_name = f"SB1{counter:05d}.BMP"
-                        bmp_path = os.path.join(img_tmp, bmp_name)
-                        pil_img.save(bmp_path, format="BMP", dpi=(300, 300))
-                        extracted.append(bmp_path)
-                        counter += 1
-                    except Exception:
-                        pass  # skip unreadable image xrefs
-
-            doc.close()
-            progress_img.progress(90, text="Building ZIP archive…")
-
-            if not extracted:
-                status_img.empty()
-                progress_img.empty()
-                st.warning("⚠️ No images found in this PDF.")
-            else:
-                # Build ZIP in memory
-                zip_buffer = io.BytesIO()
-                with _zipfile.ZipFile(zip_buffer, "w", _zipfile.ZIP_DEFLATED) as zf:
-                    for bmp_path in extracted:
-                        zf.write(bmp_path, arcname=Path(bmp_path).name)
-                zip_buffer.seek(0)
-
-                progress_img.progress(100, text="Done!")
-                status_img.empty()
-                progress_img.empty()
-
-                st.success(f"✅ Extracted **{len(extracted)}** image(s) from **{uploaded_img_pdf.name}**")
-                st.download_button(
-                    label=f"⬇️  Download  {img_doc_name}_images.zip",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"{img_doc_name}_images.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                )
-
-        except Exception as exc:
-            progress_img.empty()
-            status_img.empty()
-            st.error(f"❌ Image extraction error: {exc}")
-
-        finally:
-            shutil.rmtree(img_tmp, ignore_errors=True)
