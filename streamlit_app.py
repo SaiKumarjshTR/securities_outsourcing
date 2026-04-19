@@ -223,113 +223,96 @@ else:
     with col_btn:
         convert_btn = st.button("⚙️ Process Document", type="primary", key="convert_pdf")
     with col_btn2:
-        # Extract Images works on DOCX (ABBYY embeds images in word/media/)
-        # or directly on an uploaded DOCX
         extract_btn = st.button("🖼️ Extract Images", key="extract_images")
     with col_note:
         if is_pdf:
-            st.caption("Process → SGML.  Extract Images → process PDF first, then extract from the converted DOCX.")
+            st.caption("Process → SGML.  Extract Images → BMP ZIP (SB000001.BMP, SB000002.BMP …)")
         else:
-            st.caption("DOCX will be processed directly by the SGML pipeline.  Extract Images → reads word/media/ from this DOCX.")
+            st.caption("DOCX processed directly by SGML pipeline.  Extract Images → BMP ZIP from word/media/.")
 
-    # ── Extract Images: BMP start number input ─────────────────────────────
+    # ── Extract Images handler ──────────────────────────────────────────────
     if extract_btn:
-        st.markdown("---")
-        st.markdown("#### 🖼️ Extract Images as BMP")
-        start_num = st.number_input(
-            "Starting BMP number (e.g. 5679 → SB005679.BMP, SB005680.BMP …)",
-            min_value=1, max_value=999999, value=1, step=1, key="bmp_start_num",
-        )
-        do_extract = st.button("▶ Run Extraction", key="do_extract_btn", type="primary")
+        import io as _io
+        import re as _re
+        import zipfile as _zipfile
+        from PIL import Image as _PILImage
 
-        if do_extract:
-            import io as _io
-            import re as _re
-            import zipfile as _zipfile
-            from PIL import Image as _PILImage
+        def _media_sort_key(name):
+            m = _re.search(r'(\d+)', os.path.basename(name))
+            return int(m.group(1)) if m else 0
 
-            def _media_sort_key(name):
-                m = _re.search(r'(\d+)', os.path.basename(name))
-                return int(m.group(1)) if m else 0
+        progress_img = st.progress(0, text="Reading DOCX…")
+        status_img   = st.empty()
+        img_tmp      = tempfile.mkdtemp(prefix="imgext_")
 
-            progress_img = st.progress(0, text="Reading DOCX…")
-            status_img   = st.empty()
-            img_tmp      = tempfile.mkdtemp(prefix="imgext_")
+        try:
+            # For PDF: convert to DOCX first so we can read word/media/
+            if is_pdf:
+                status_img.info("⏳ Converting PDF → DOCX to access images…")
+                progress_img.progress(10, text="Converting PDF → DOCX…")
+                pdf_tmp  = os.path.join(img_tmp, uploaded_pdf.name)
+                docx_tmp = os.path.join(img_tmp, f"{doc_name}.docx")
+                with open(pdf_tmp, "wb") as fh:
+                    fh.write(uploaded_pdf.getvalue())
+                ok = _pdf_to_docx(pdf_tmp, docx_tmp)
+                if not ok or not os.path.exists(docx_tmp):
+                    progress_img.empty(); status_img.empty()
+                    st.error("❌ PDF → DOCX conversion failed. Cannot extract images.")
+                    shutil.rmtree(img_tmp, ignore_errors=True)
+                    st.stop()
+                docx_bytes = open(docx_tmp, "rb").read()
+            else:
+                docx_bytes = uploaded_pdf.getvalue()
 
-            try:
-                # Determine source DOCX bytes
-                if is_pdf:
-                    # Need to convert PDF → DOCX first
-                    status_img.info("⏳ Converting PDF → DOCX to access images…")
-                    progress_img.progress(10, text="Converting PDF → DOCX…")
-                    pdf_tmp = os.path.join(img_tmp, uploaded_pdf.name)
-                    docx_tmp = os.path.join(img_tmp, f"{doc_name}.docx")
-                    with open(pdf_tmp, "wb") as fh:
-                        fh.write(uploaded_pdf.getvalue())
-                    ok = _pdf_to_docx(pdf_tmp, docx_tmp)
-                    if not ok or not os.path.exists(docx_tmp):
-                        progress_img.empty(); status_img.empty()
-                        st.error("❌ PDF → DOCX conversion failed. Cannot extract images.")
-                        shutil.rmtree(img_tmp, ignore_errors=True)
-                        st.stop()
-                    docx_bytes = open(docx_tmp, "rb").read()
-                else:
-                    docx_bytes = uploaded_pdf.getvalue()
+            progress_img.progress(30, text="Reading word/media/…")
+            status_img.info("⏳ Extracting images…")
 
-                progress_img.progress(30, text="Reading word/media/…")
-                status_img.info("⏳ Extracting images from DOCX…")
+            extracted = []
+            with _zipfile.ZipFile(_io.BytesIO(docx_bytes)) as z:
+                media = sorted(
+                    [n for n in z.namelist() if n.startswith("word/media/")],
+                    key=_media_sort_key,
+                )
+                total = len(media)
+                if total == 0:
+                    progress_img.empty(); status_img.empty()
+                    st.warning("⚠️ No images found in this document (word/media/ is empty).")
+                    shutil.rmtree(img_tmp, ignore_errors=True)
+                    st.stop()
 
-                extracted = []
-                with _zipfile.ZipFile(_io.BytesIO(docx_bytes)) as z:
-                    media = sorted(
-                        [n for n in z.namelist() if n.startswith("word/media/")],
-                        key=_media_sort_key,
+                for i, entry in enumerate(media):
+                    bmp_name = f"SB{i + 1:06d}.BMP"   # SB000001, SB000002, …
+                    bmp_path = os.path.join(img_tmp, bmp_name)
+                    raw      = z.read(entry)
+                    img      = _PILImage.open(_io.BytesIO(raw))
+                    img.save(bmp_path, format="BMP")   # preserve original mode (RGB / 1-bit)
+                    extracted.append(bmp_path)
+                    progress_img.progress(
+                        30 + int((i + 1) / total * 65),
+                        text=f"{os.path.basename(entry)} → {bmp_name}…",
                     )
-                    total = len(media)
-                    if total == 0:
-                        progress_img.empty(); status_img.empty()
-                        st.warning("⚠️ No images found in this DOCX (word/media/ is empty).")
-                        shutil.rmtree(img_tmp, ignore_errors=True)
-                        st.stop()
 
-                    for i, entry in enumerate(media):
-                        n        = int(start_num) + i
-                        bmp_name = f"SB{n:06d}.BMP"
-                        bmp_path = os.path.join(img_tmp, bmp_name)
-                        raw      = z.read(entry)
-                        img      = _PILImage.open(_io.BytesIO(raw))
-                        # Preserve original mode (RGB stays RGB, 1-bit stays 1-bit)
-                        img.save(bmp_path, format="BMP")
-                        extracted.append(bmp_path)
-                        progress_img.progress(
-                            30 + int((i + 1) / total * 60),
-                            text=f"Converting {os.path.basename(entry)} → {bmp_name}…",
-                        )
-
-                progress_img.progress(95, text="Building ZIP…")
-                zip_buf = _io.BytesIO()
-                with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
-                    for bp in extracted:
-                        zf.write(bp, arcname=Path(bp).name)
-                zip_buf.seek(0)
-                progress_img.progress(100, text="Done!")
-                status_img.empty(); progress_img.empty()
-                st.success(
-                    f"✅ Extracted **{total}** image(s) — "
-                    f"`SB{int(start_num):06d}.BMP` … `SB{int(start_num)+total-1:06d}.BMP`"
-                )
-                st.download_button(
-                    label=f"⬇️  Download  {doc_name}_images.zip",
-                    data=zip_buf.getvalue(),
-                    file_name=f"{doc_name}_images.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                )
-            except Exception as exc:
-                progress_img.empty(); status_img.empty()
-                st.error(f"❌ Image extraction error: {exc}")
-            finally:
-                shutil.rmtree(img_tmp, ignore_errors=True)
+            progress_img.progress(97, text="Building ZIP…")
+            zip_buf = _io.BytesIO()
+            with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+                for bp in extracted:
+                    zf.write(bp, arcname=Path(bp).name)
+            zip_buf.seek(0)
+            progress_img.progress(100, text="Done!")
+            status_img.empty(); progress_img.empty()
+            st.success(f"✅ Extracted **{total}** image(s) — SB000001.BMP … SB{total:06d}.BMP")
+            st.download_button(
+                label=f"⬇️  Download  {doc_name}_images.zip",
+                data=zip_buf.getvalue(),
+                file_name=f"{doc_name}_images.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+        except Exception as exc:
+            progress_img.empty(); status_img.empty()
+            st.error(f"❌ Image extraction error: {exc}")
+        finally:
+            shutil.rmtree(img_tmp, ignore_errors=True)
 
     if convert_btn:
         st.session_state.processing_count += 1
