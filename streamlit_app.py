@@ -31,7 +31,7 @@ st.set_page_config(
     page_title="Securities Commission Conversion",
     page_icon="📄",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
     menu_items={
         "Get Help": None,
         "Report a bug": None,
@@ -79,6 +79,30 @@ st.markdown(
         background-color: #218838 !important;
     }
 
+    /* ── Sidebar expander styling ────────────────────────────────────── */
+    [data-testid="stSidebar"] .streamlit-expanderHeader {
+        background-color: #1e2d3e !important;
+        color: #cdd8e3 !important;
+        border-radius: 6px !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stSidebar"] .streamlit-expanderContent {
+        background-color: #1a2432 !important;
+        border: 1px solid #2e4060 !important;
+        border-top: none !important;
+        border-radius: 0 0 6px 6px !important;
+    }
+
+    /* ── Active sessions metric — bright visible color ───────────────── */
+    [data-testid="stSidebar"] [data-testid="stMetricValue"] {
+        color: #4fc3f7 !important;
+        font-size: 1.8rem !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMetricLabel"] {
+        color: #90adc4 !important;
+    }
+
     /* ── Upload area dashed border ───────────────────────────────────── */
     [data-testid="stFileUploader"] {
         border: 2px dashed #c0c8d4 !important;
@@ -112,34 +136,27 @@ if "processing_count" not in st.session_state:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### ⚙ Session Info")
-    st.markdown(f"Session ID: {st.session_state.session_id}...")
-    st.markdown(f"Status: {st.session_state.status}")
-    st.markdown(f"Created: {st.session_state.created_at}")
+    with st.expander("⚙ Session Info", expanded=False):
+        st.markdown(f"**Session ID:** `{st.session_state.session_id}`")
+        st.markdown(f"**Status:** {st.session_state.status}")
+        st.markdown(f"**Created:** {st.session_state.created_at}")
 
-    st.markdown("---")
-    st.markdown("### 📊 System Stats")
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-    st.text_input(
-        "Active Sessions",
-        value=str(st.session_state.active_sessions),
-        disabled=True,
-        key="_sidebar_active",
-    )
-    st.text_input(
-        "Processing",
-        value=str(st.session_state.processing_count),
-        disabled=True,
-        key="_sidebar_proc",
-    )
+    with st.expander("📊 System Status", expanded=False):
+        st.metric("Active Sessions", st.session_state.active_sessions)
+        st.metric("Processing", st.session_state.processing_count)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🆕  New Session", use_container_width=True, key="new_session_btn"):
-        st.session_state.session_id = uuid.uuid4().hex[:8]
-        st.session_state.created_at = datetime.datetime.now().strftime("%H:%M:%S")
-        st.session_state.status = "active"
-        st.session_state.processing_count = 0
-        st.rerun()
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+    with st.expander("🆕 New Session", expanded=False):
+        st.markdown("Start a fresh session and reset all state.")
+        if st.button("Start New Session", use_container_width=True, key="new_session_btn"):
+            st.session_state.session_id = uuid.uuid4().hex[:8]
+            st.session_state.created_at = datetime.datetime.now().strftime("%H:%M:%S")
+            st.session_state.status = "active"
+            st.session_state.processing_count = 0
+            st.rerun()
 
 
 # ── Helper: run pipeline with DOCX bytes ─────────────────────────────────────
@@ -178,12 +195,6 @@ def _pdf_to_docx(pdf_path: str, docx_path: str) -> bool:
 
 # ── Main content ──────────────────────────────────────────────────────────────
 st.markdown("# 📄 Securities Commission Conversion")
-st.markdown(
-    "<p style='color:#6b7685; margin-top:-0.5rem;'>"
-    "AI-powered text extraction and verification for legislative documents"
-    "</p>",
-    unsafe_allow_html=True,
-)
 
 st.markdown("---")
 
@@ -212,65 +223,101 @@ else:
     with col_btn:
         convert_btn = st.button("⚙️ Process Document", type="primary", key="convert_pdf")
     with col_btn2:
-        extract_btn = st.button("🖼️ Extract Images", key="extract_images", disabled=not is_pdf)
+        # Extract Images works on DOCX (ABBYY embeds images in word/media/)
+        # or directly on an uploaded DOCX
+        extract_btn = st.button("🖼️ Extract Images", key="extract_images")
     with col_note:
         if is_pdf:
-            st.caption("Process → SGML. Extract Images → greyscale BMP ZIP (SB100001.BMP…)")
+            st.caption("Process → SGML.  Extract Images → process PDF first, then extract from the converted DOCX.")
         else:
-            st.caption("DOCX will be processed directly by the SGML pipeline.")
+            st.caption("DOCX will be processed directly by the SGML pipeline.  Extract Images → reads word/media/ from this DOCX.")
 
-    # ── Extract Images handler ──────────────────────────────────────────────
-    if extract_btn and is_pdf:
-        progress_img = st.progress(0, text="Opening PDF…")
-        status_img   = st.empty()
-        img_tmp = tempfile.mkdtemp(prefix="imgext_")
-        try:
-            import io
+    # ── Extract Images: BMP start number input ─────────────────────────────
+    if extract_btn:
+        st.markdown("---")
+        st.markdown("#### 🖼️ Extract Images as BMP")
+        start_num = st.number_input(
+            "Starting BMP number (e.g. 5679 → SB005679.BMP, SB005680.BMP …)",
+            min_value=1, max_value=999999, value=1, step=1, key="bmp_start_num",
+        )
+        do_extract = st.button("▶ Run Extraction", key="do_extract_btn", type="primary")
+
+        if do_extract:
+            import io as _io
+            import re as _re
             import zipfile as _zipfile
-            import fitz
             from PIL import Image as _PILImage
 
-            pdf_path_img = os.path.join(img_tmp, uploaded_pdf.name)
-            with open(pdf_path_img, "wb") as fh:
-                fh.write(uploaded_pdf.getvalue())
+            def _media_sort_key(name):
+                m = _re.search(r'(\d+)', os.path.basename(name))
+                return int(m.group(1)) if m else 0
 
-            status_img.info("⏳ Scanning PDF for images…")
-            _doc = fitz.open(pdf_path_img)
-            extracted, counter, total_pages = [], 1, len(_doc)
+            progress_img = st.progress(0, text="Reading DOCX…")
+            status_img   = st.empty()
+            img_tmp      = tempfile.mkdtemp(prefix="imgext_")
 
-            for page_num, page in enumerate(_doc):
-                progress_img.progress(
-                    int((page_num + 1) / total_pages * 80),
-                    text=f"Scanning page {page_num + 1}/{total_pages}…",
-                )
-                for img_info in page.get_images(full=True):
-                    xref = img_info[0]
-                    try:
-                        base_img  = _doc.extract_image(xref)
-                        pil_img   = _PILImage.open(io.BytesIO(base_img["image"]))
-                        pil_img   = pil_img.convert("L")  # greyscale
-                        bmp_name  = f"SB1{counter:05d}.BMP"
-                        bmp_path  = os.path.join(img_tmp, bmp_name)
-                        pil_img.save(bmp_path, format="BMP", dpi=(300, 300))
+            try:
+                # Determine source DOCX bytes
+                if is_pdf:
+                    # Need to convert PDF → DOCX first
+                    status_img.info("⏳ Converting PDF → DOCX to access images…")
+                    progress_img.progress(10, text="Converting PDF → DOCX…")
+                    pdf_tmp = os.path.join(img_tmp, uploaded_pdf.name)
+                    docx_tmp = os.path.join(img_tmp, f"{doc_name}.docx")
+                    with open(pdf_tmp, "wb") as fh:
+                        fh.write(uploaded_pdf.getvalue())
+                    ok = _pdf_to_docx(pdf_tmp, docx_tmp)
+                    if not ok or not os.path.exists(docx_tmp):
+                        progress_img.empty(); status_img.empty()
+                        st.error("❌ PDF → DOCX conversion failed. Cannot extract images.")
+                        shutil.rmtree(img_tmp, ignore_errors=True)
+                        st.stop()
+                    docx_bytes = open(docx_tmp, "rb").read()
+                else:
+                    docx_bytes = uploaded_pdf.getvalue()
+
+                progress_img.progress(30, text="Reading word/media/…")
+                status_img.info("⏳ Extracting images from DOCX…")
+
+                extracted = []
+                with _zipfile.ZipFile(_io.BytesIO(docx_bytes)) as z:
+                    media = sorted(
+                        [n for n in z.namelist() if n.startswith("word/media/")],
+                        key=_media_sort_key,
+                    )
+                    total = len(media)
+                    if total == 0:
+                        progress_img.empty(); status_img.empty()
+                        st.warning("⚠️ No images found in this DOCX (word/media/ is empty).")
+                        shutil.rmtree(img_tmp, ignore_errors=True)
+                        st.stop()
+
+                    for i, entry in enumerate(media):
+                        n        = int(start_num) + i
+                        bmp_name = f"SB{n:06d}.BMP"
+                        bmp_path = os.path.join(img_tmp, bmp_name)
+                        raw      = z.read(entry)
+                        img      = _PILImage.open(_io.BytesIO(raw))
+                        # Preserve original mode (RGB stays RGB, 1-bit stays 1-bit)
+                        img.save(bmp_path, format="BMP")
                         extracted.append(bmp_path)
-                        counter  += 1
-                    except Exception:
-                        pass
-            _doc.close()
+                        progress_img.progress(
+                            30 + int((i + 1) / total * 60),
+                            text=f"Converting {os.path.basename(entry)} → {bmp_name}…",
+                        )
 
-            progress_img.progress(90, text="Building ZIP…")
-            if not extracted:
-                status_img.empty(); progress_img.empty()
-                st.warning("⚠️ No images found in this PDF.")
-            else:
-                zip_buf = io.BytesIO()
+                progress_img.progress(95, text="Building ZIP…")
+                zip_buf = _io.BytesIO()
                 with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
                     for bp in extracted:
                         zf.write(bp, arcname=Path(bp).name)
                 zip_buf.seek(0)
                 progress_img.progress(100, text="Done!")
                 status_img.empty(); progress_img.empty()
-                st.success(f"✅ Extracted **{len(extracted)}** image(s) — greyscale BMP, 300 dpi")
+                st.success(
+                    f"✅ Extracted **{total}** image(s) — "
+                    f"`SB{int(start_num):06d}.BMP` … `SB{int(start_num)+total-1:06d}.BMP`"
+                )
                 st.download_button(
                     label=f"⬇️  Download  {doc_name}_images.zip",
                     data=zip_buf.getvalue(),
@@ -278,11 +325,11 @@ else:
                     mime="application/zip",
                     use_container_width=True,
                 )
-        except Exception as exc:
-            progress_img.empty(); status_img.empty()
-            st.error(f"❌ Image extraction error: {exc}")
-        finally:
-            shutil.rmtree(img_tmp, ignore_errors=True)
+            except Exception as exc:
+                progress_img.empty(); status_img.empty()
+                st.error(f"❌ Image extraction error: {exc}")
+            finally:
+                shutil.rmtree(img_tmp, ignore_errors=True)
 
     if convert_btn:
         st.session_state.processing_count += 1
