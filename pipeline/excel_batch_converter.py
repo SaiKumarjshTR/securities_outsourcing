@@ -260,7 +260,7 @@ class EnhancedExcelToSGMLConverter:
         sgml.append('</TABLE></P>')
         return '\n'.join(sgml)
 
-    def generate_data_table(self, ws, header_row, data_start_row, doc_type: int = 2):
+    def generate_data_table(self, ws, header_row, data_start_row, doc_type: int = 2, landscape: bool = False):
         """
         Generate data table with:
         - Type-specific column widths (D1)
@@ -268,15 +268,33 @@ class EnhancedExcelToSGMLConverter:
         - Skip entirely empty data rows (D5)
         - Comma-formatted large numbers (D9)
         - Multi-level header detection (D8)
+        - ORIENT="LANDSCAP" + RSRV markers when landscape (Issue 3)
+        - Actual column count from header row, not ws.max_column (Issue 4)
         """
-        n_cols = ws.max_column
+        # Issue 4: find last non-empty column in header row (not ws.max_column)
+        n_cols = 0
+        for c in range(ws.max_column, 0, -1):
+            if ws.cell(header_row, c).value is not None:
+                n_cols = c
+                break
+        if n_cols == 0:
+            n_cols = ws.max_column
         merged = self.get_merged_cells_map(ws)
         head_colwds = self._colwds_for_type(doc_type, n_cols, 'head')
         body_colwds = self._colwds_for_type(doc_type, n_cols, 'body')
 
         sgml = []
-        sgml.append('<P><TABLE>')
-        sgml.append('<SGMLTBL>')
+        # Issue 3: RSRV markers go inside <P>...</P>, ORIENT on SGMLTBL
+        if landscape:
+            sgml.append('<P>')
+            sgml.append('<?RSRVON>')
+            sgml.append('<TABLE>')
+        else:
+            sgml.append('<P><TABLE>')
+        if landscape:
+            sgml.append('<SGMLTBL ORIENT="LANDSCAP">')
+        else:
+            sgml.append('<SGMLTBL>')
 
         # ── Table HEAD ─────────────────────────────────────────────────────
         # Detect multi-level header (D8): if row above header_row is also bold & non-empty
@@ -361,7 +379,13 @@ class EnhancedExcelToSGMLConverter:
         sgml.append('</TBLROWS>')
         sgml.append('</TBLBODY>')
         sgml.append('</SGMLTBL>')
-        sgml.append('</TABLE></P>')
+        # Issue 3: RSRV markers go after </TABLE> before </P>
+        if landscape:
+            sgml.append('</TABLE>')
+            sgml.append('<?RSRVOFF>')
+            sgml.append('</P>')
+        else:
+            sgml.append('</TABLE></P>')
         return '\n'.join(sgml)
 
     # ── main convert ─────────────────────────────────────────────────────────
@@ -414,30 +438,39 @@ class EnhancedExcelToSGMLConverter:
 
         lines.append('<FREEFORM>')
 
-        # D2: landscape markers wrap the BLOCK2
-        if landscape:
-            lines.append('<?RSRVON?>')
+        # Process all sheets: Floating (type 1) has Canada + United States sheets (Issue 1)
+        all_sheets = wb.worksheets if doc_type == 1 else [ws]
 
-        lines.append('<BLOCK2>')
+        for sheet_idx, sheet in enumerate(all_sheets):
+            sheet_struct = self.analyze_sheet_structure(sheet)
+            if sheet_idx > 0:
+                print(f'  Sheet [{sheet_idx + 1}]: {sheet.title}  '
+                      f'Rows: {sheet.max_row}  Cols: {sheet.max_column}')
 
-        # Title (E2/D10: no case transformation — preserve original)
-        if structure['title_row']:
-            raw_title = str(ws.cell(structure['title_row'], 1).value)
-            lines.append(f'<TI>{self.convert_entities(raw_title)}</TI>')
+            # Issue 2: APPENDIX has no BLOCK2 (BLOCK2 requires TI per keying rules)
+            if root_tag != 'APPENDIX':
+                lines.append('<BLOCK2>')
 
-        # Metadata table
-        if structure['metadata_rows']:
-            lines.append(self.generate_metadata_table(ws, structure['metadata_rows'], doc_type))
+            # Title: first sheet uses row-1 title; extra sheets use sheet tab name as TI
+            if sheet_idx > 0:
+                lines.append(f'<TI>{self.convert_entities(sheet.title)}</TI>')
+            elif sheet_struct['title_row']:
+                raw_title = str(sheet.cell(sheet_struct['title_row'], 1).value)
+                lines.append(f'<TI>{self.convert_entities(raw_title)}</TI>')
 
-        # Data table
-        if structure['header_row'] and structure['data_start_row']:
-            lines.append(self.generate_data_table(
-                ws, structure['header_row'], structure['data_start_row'], doc_type))
+            # Metadata table: first sheet only
+            if sheet_idx == 0 and sheet_struct['metadata_rows']:
+                lines.append(self.generate_metadata_table(
+                    sheet, sheet_struct['metadata_rows'], doc_type))
 
-        lines.append('</BLOCK2>')
+            # Data table
+            if sheet_struct['header_row'] and sheet_struct['data_start_row']:
+                lines.append(self.generate_data_table(
+                    sheet, sheet_struct['header_row'], sheet_struct['data_start_row'],
+                    doc_type, landscape=landscape))
 
-        if landscape:
-            lines.append('<?RSRVOFF?>')
+            if root_tag != 'APPENDIX':
+                lines.append('</BLOCK2>')
 
         lines.append('</FREEFORM>')
         lines.append(f'</{root_tag}>')
