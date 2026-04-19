@@ -1,5 +1,5 @@
 """
-Pipeline runner — thin shim that loads batch_runner_standalone.py, patches
+Pipeline runner — thin shim that loads batch_runner_deploy.py, patches
 Windows-only imports, overrides hardcoded PATHS, then exposes a clean
 `run_pipeline(docx_bytes, doc_name) -> dict` function used by the API.
 
@@ -79,7 +79,7 @@ def _load_pipeline() -> None:
     if not _pipeline_script_exists():
         raise RuntimeError(
             f"Pipeline script not found: {_PIPELINE_SCRIPT}\n"
-            "Copy batch_runner_standalone.py into the pipeline/ directory."
+            "Ensure batch_runner_deploy.py is present in the pipeline/ directory."
         )
     src = _PIPELINE_SCRIPT.read_text(encoding="utf-8-sig", errors="replace")
     code = compile(src, str(_PIPELINE_SCRIPT), "exec")
