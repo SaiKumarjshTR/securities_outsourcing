@@ -117,7 +117,7 @@ def run_pipeline(docx_bytes: bytes, doc_name: str) -> Dict[str, Any]:
     """
     _load_pipeline()
 
-    from app import config  # Import here to avoid circular imports
+    from app import app_config as config  # renamed from config.py to avoid clash with root config.py
 
     # Create an isolated temp directory for this request
     os.makedirs(config.TEMP_DIR, exist_ok=True)  # ensure base dir exists (not created by Docker)
