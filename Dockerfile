@@ -66,7 +66,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8501 \
     HOST=0.0.0.0 \
-    TEMP_DIR=/tmp/sgml_pipeline
+    TEMP_DIR=/tmp/sgml_pipeline \
+    FRS14_SERVER_URL=http://172.25.16.1:7090
 
 # ── Health check ─────────────────────────────────────────────────────────────
 # Streamlit exposes /_stcore/health  (returns 200 OK when ready).
