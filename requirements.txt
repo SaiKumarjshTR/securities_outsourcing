@@ -21,7 +21,13 @@ pydantic==2.11.3
 pandas==2.2.3
 openpyxl==3.1.5
 
+# ── FRS14 HTTP bridge (Windows-side server) ───────────────────────────────────
+flask==3.1.3
+waitress==3.0.2
+
+# ── HTTP client (used by streamlit_app._pdf_to_docx and anthropic SDK) ────────
+httpx==0.28.1
+
 # ── NOTE: pywin32 (win32com) is intentionally excluded ────────────────────────
 # It is Windows-only and not available in the Linux Docker container.
-# The pipeline's ABBYY/win32com calls are handled by a no-op stub injected
-# at startup; the pipeline falls back to DOCX input automatically.
+# The old ABBYY COM API is replaced by the FRS14 HTTP bridge (frs14_bridge.py).
