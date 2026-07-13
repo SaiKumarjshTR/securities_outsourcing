@@ -350,14 +350,15 @@ with st.sidebar:
 
     with st.expander("📄 ABBYY FREngine 12", expanded=False):
         st.caption("PDF → DOCX conversion via ABBYY FREngine 12 (Ubuntu/Linux).")
-        st.code(_ABBYY_CLI, language=None)
-        st.caption("Set `ABBYY_CLI` / `ABBYY_LIB` env vars to override paths.")
         import subprocess as _sp
         import socket as _sock
-        _cli_ok = os.path.isfile(_ABBYY_CLI)
+        from pathlib import Path as _Path
+        _cli_ok  = os.path.isfile(_ABBYY_CLI)
         _ls_host = os.environ.get("ABBYY_LS_HOST", "")
+        _lic_dir = _Path(os.getenv("ABBYY_LICENSES_DIR", "/var/lib/ABBYY/SDK/12/Licenses"))
+        _tokens  = sorted(_lic_dir.glob("*.ActivationToken")) if _lic_dir.exists() else []
+
         if _ls_host:
-            # External LicensingService mode — check TCP connectivity
             try:
                 _s = _sock.create_connection((_ls_host, 3023), timeout=3)
                 _s.close()
@@ -367,19 +368,30 @@ with st.sidebar:
                 _svc_ok = False
                 _svc_label = f"external LS at {_ls_host}:3023 (unreachable)"
         else:
-            # Local LicensingService mode
             _svc_label = "local LicensingService"
             try:
                 _svc_ok = _sp.run(['pgrep', '-f', 'LicensingService'],
                                    capture_output=True).returncode == 0
             except FileNotFoundError:
                 _svc_ok = False
-        if _cli_ok and _svc_ok:
-            st.success(f"✅ ABBYY ready ({_svc_label})")
+
+        if _cli_ok and _svc_ok and _tokens:
+            st.success(f"✅ ABBYY ready — {len(_tokens)} license(s)")
+        elif _cli_ok and _svc_ok and not _tokens:
+            st.warning("⚠️ No license token — go to **License Setup** page")
         elif _cli_ok and not _svc_ok:
-            st.warning(f"⚠️ {_svc_label} not running — conversions will fail")
+            st.warning(f"⚠️ {_svc_label} not running")
         else:
-            st.info("ℹ️ ABBYY CLI not on this host — conversions run on the pipeline host")
+            st.info("ℹ️ ABBYY CLI not on this host")
+
+        if _tokens:
+            for _t in _tokens:
+                st.caption(f"• `{_t.name}`")
+        else:
+            st.caption("No `.ActivationToken` files found.")
+
+        st.page_link("pages/4_License_Setup.py", label="🔑 Configure License",
+                     help="Upload token file or activate with Serial Number")
 
     st.markdown("---")
 
