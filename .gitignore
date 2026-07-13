@@ -13,6 +13,9 @@ env/
 .env
 cloud-tool/
 
+# ── ABBYY bundle (licensed binaries, created by scripts/bundle_abbyy.sh) ─────
+abbyy_bundle/
+
 # ── Build artifacts ───────────────────────────────────────────────────────────
 dist/
 build/
@@ -36,3 +39,7 @@ data/chroma_db/
 *.ActivationToken
 *.key
 *.pem
+*.crt
+
+# ── pip/setuptools error artifacts (broken "=-version" files) ─────────────────
+=*

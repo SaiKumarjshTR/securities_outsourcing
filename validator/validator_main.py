@@ -153,7 +153,7 @@ class ValidationReport:
 # ── Main validate function ─────────────────────────────────────────────────────
 def validate(
     sgml_path: str,
-    pdf_path: str,
+    pdf_path: Optional[str] = None,
     docx_path: Optional[str] = None,
     run_l3: bool = True,
 ) -> ValidationReport:
@@ -163,7 +163,8 @@ def validate(
     Parameters
     ----------
     sgml_path  : str           — path to the pipeline-output SGML file
-    pdf_path   : str           — path to the source PDF (always required in production)
+    pdf_path   : str, optional — path to the source PDF. When None, L1 is skipped
+                                  and only L2/L3/L4-D6 (encoding) validation runs.
     docx_path  : str, optional — path to the ABBYY-generated DOCX (intermediate file).
                                   When provided, D3 uses two-stage comparison to
                                   separate ABBYY errors from pipeline errors, reducing
@@ -201,9 +202,16 @@ def validate(
         )
 
         # ── Level 1: Content Fidelity ─────────────────────────────────────
-        pdf_content = extract_pdf_content(str(pdf_path))
-        sgml_content = extract_sgml_content(raw_sgml)
-        l1 = validate_content(pdf_content, sgml_content, doc_class)
+        # When no PDF is provided (vendor SGML-only mode), skip L1 and give
+        # neutral half-marks so the doc is not unfairly penalised.
+        if pdf_path and Path(pdf_path).exists():
+            pdf_content = extract_pdf_content(str(pdf_path))
+            sgml_content = extract_sgml_content(raw_sgml)
+            l1 = validate_content(pdf_content, sgml_content, doc_class)
+        else:
+            l1 = L1Result(score=17.5)   # half of 35 — neutral
+            l1.issues = []
+            l1.warnings = ["L1 skipped — no source PDF provided"]
         report.l1 = l1
         report.l1_score = l1.score
 
@@ -245,7 +253,9 @@ def validate(
         # documents unfairly, so we adjust the denominator:
         #   full run:   L1(35)+L2(40)+L3(25)+L4(30) = 130
         #   no-PDF run: L1(35)+L2(40)+L3(25)+D6(3)  = 103
-        _effective_max = _TOTAL_MAX if l4.pdf_available else (35.0 + 40.0 + 25.0 + 3.0)
+        #   no-L3 run:  L1(35)+L2(40)+L4(30)        = 105
+        _l3_max = 25.0 if run_l3 else 0.0
+        _effective_max = (_l3_max + 35.0 + 40.0 + 30.0) if l4.pdf_available else (_l3_max + 35.0 + 40.0 + 3.0)
         report.total_score = (
             report.l1_score + report.l2_score +
             report.l3_score + report.l4_score
@@ -272,6 +282,75 @@ def validate(
         if l2.critical_failure:
             report.critical_failures.append("L2_CRITICAL: Structural fatal error detected")
 
+        # L2_EMPTY_ITEM: Completely empty <ITEM> elements — content was deleted.
+        # Like L4_EMPTY_FOOTNOTE, forces at least REVIEW (not REJECT) so a human
+        # can assess whether content deletion is intentional.
+        _empty_items = getattr(l2, "empty_item_count", 0)
+        if _empty_items > 0:
+            report.critical_failures.append(
+                f"L2_EMPTY_ITEM: {_empty_items} <ITEM> element(s) are completely empty — "
+                f"list item content appears to have been deleted. Human review required."
+            )
+
+        # L2_ORPHAN_TBLCELL: TBLCELL elements found outside TBLROW — table row wrappers deleted.
+        # Forces REVIEW so a human can assess whether table content was intentionally removed.
+        _orphan_tblcell = getattr(l2, "orphan_tblcell_count", 0)
+        if _orphan_tblcell > 0:
+            report.critical_failures.append(
+                f"L2_ORPHAN_TBLCELL: {_orphan_tblcell} <TBLCELL> element(s) found outside "
+                f"<TBLROW> — table row wrappers appear to have been deleted. Human review required."
+            )
+
+        # ── L4 content-deletion escalation ───────────────────────────────────
+        # ONLY trigger on LLM-confirmed issues (Opus-verified truncations and
+        # mutations). Deterministic inline_changed_paragraphs have a high FP
+        # rate and are already reflected in the L4 score deduction.
+        # This prevents the 89% false-positive rate on correct vendor files.
+        #
+        # Double-confirmation: LLM outputs are non-deterministic — the same
+        # file can produce different mutation/truncation counts on different
+        # runs. To reduce these non-determinism FPs (~5% rate observed on
+        # clean vendor files), we re-run L4 once if it flags LLM issues and
+        # only escalate when BOTH runs independently confirm the finding.
+        if l4 and (
+            getattr(l4, "llm_confirmed_truncations", 0) > 0
+            or getattr(l4, "llm_confirmed_mutations", 0) > 0
+        ):
+            try:
+                l4_confirm = validate_source_comparison(
+                    raw_sgml,
+                    pdf_path=str(pdf_path) if pdf_path else None,
+                    docx_path=str(docx_path) if docx_path else None,
+                )
+                _confirmed_trunc = min(
+                    getattr(l4, "llm_confirmed_truncations", 0),
+                    getattr(l4_confirm, "llm_confirmed_truncations", 0),
+                )
+                _confirmed_mut = min(
+                    getattr(l4, "llm_confirmed_mutations", 0),
+                    getattr(l4_confirm, "llm_confirmed_mutations", 0),
+                )
+            except Exception:
+                # If confirmation run fails, fall back to first-run counts
+                _confirmed_trunc = getattr(l4, "llm_confirmed_truncations", 0)
+                _confirmed_mut   = getattr(l4, "llm_confirmed_mutations", 0)
+            if _confirmed_trunc > 0 or _confirmed_mut > 0:
+                report.critical_failures.append(
+                    f"L4_CONTENT_CHANGED: {_confirmed_trunc} LLM-confirmed "
+                    f"truncated paragraph(s) and {_confirmed_mut} LLM-confirmed "
+                    f"mutated paragraph(s) — human review required"
+                )
+
+        # D4-fn: Empty FREEFORM blocks inside FOOTNOTE tags — deterministic,
+        # no LLM required. Legitimate SGML never has empty footnote bodies.
+        _empty_fn = getattr(l4, "empty_footnote_bodies", 0)
+        if _empty_fn > 0:
+            report.critical_failures.append(
+                f"L4_EMPTY_FOOTNOTE: {_empty_fn} footnote body/bodies completely "
+                f"empty — text was removed from inside a <FOOTNOTE><FREEFORM> block. "
+                f"Human review required to restore deleted content."
+            )
+
         # ── Decision ──────────────────────────────────────────────────────────
         report.decision = _make_decision(
             normalised=report.normalised_score,
@@ -281,6 +360,22 @@ def validate(
             critical_failures=report.critical_failures,
             l4_pdf_available=l4.pdf_available if l4 else True,
         )
+
+        # ── Pattern B mitigation: ACCEPT despite PDF paragraphs missing ───────
+        # High-baseline documents (>97% score) can have content deleted without
+        # the score dropping below the ACCEPT threshold.  When the L1 content
+        # check detected that one or more PDF paragraphs are absent from the SGML,
+        # downgrade ACCEPT → ACCEPT_WITH_WARNINGS so a human reviewer is directed
+        # to inspect the specific D3 fix cards.
+        # NOTE: We do NOT downgrade REVIEW or REJECT — those already require review.
+        _l1_missing = getattr(l1, "total_missing_para_count", 0) if l1 else 0
+        if report.decision == "ACCEPT" and _l1_missing > 0:
+            report.decision = "ACCEPT_WITH_WARNINGS"
+            report.warnings.append(
+                f"Downgraded ACCEPT → ACCEPT_WITH_WARNINGS: "
+                f"{_l1_missing} PDF paragraph(s) not found in SGML (L1 content check). "
+                "Review D3 fix cards for missing content details."
+            )
 
     except Exception as exc:
         report.error = traceback.format_exc()
@@ -300,7 +395,20 @@ def _make_decision(
 ) -> str:
     """Apply decision thresholds with critical-failure override."""
 
-    if critical_failures:
+    # L4 content-deletion issues force REVIEW (not REJECT) — human must check
+    # but document is not necessarily broken structurally.
+    _l4_content_changed = any(
+        ("L4_CONTENT_CHANGED" in f or "L4_EMPTY_FOOTNOTE" in f or
+         "L2_EMPTY_ITEM" in f or "L2_ORPHAN_TBLCELL" in f)
+        for f in (critical_failures or [])
+    )
+    _hard_failures = [
+        f for f in (critical_failures or [])
+        if "L4_CONTENT_CHANGED" not in f and "L4_EMPTY_FOOTNOTE" not in f
+        and "L2_EMPTY_ITEM" not in f and "L2_ORPHAN_TBLCELL" not in f
+    ]
+
+    if _hard_failures:
         return "REJECT"
 
     # Hard floor on structural quality
@@ -315,6 +423,10 @@ def _make_decision(
     # Without a PDF only D6 (encoding, max 3 pts) runs; the low raw score is
     # expected and must not force every no-PDF document into REVIEW.
     if l4_pdf_available and l4 < L4_MIN_PASS:
+        return "REVIEW"
+
+    # L4 content-deletion escalation: force at least REVIEW regardless of total score
+    if _l4_content_changed:
         return "REVIEW"
 
     if normalised >= THRESHOLD_ACCEPT:

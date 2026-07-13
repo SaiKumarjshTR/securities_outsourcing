@@ -1,0 +1,54 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dockerfile.validator — TR SGML Validator
+# ─────────────────────────────────────────────────────────────────────────────
+# UI port      : 8501  (Streamlit)
+# Entry point  : streamlit run validator_app.py
+# Health check : GET /_stcore/health
+# No ABBYY / no native binaries — pure Python
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM python:3.12-slim
+
+LABEL maintainer="Thomson Reuters — Securities SGML Team"
+LABEL version="0.0.1"
+LABEL description="TR SGML Validator — L1–L4 validation with HITL review UI"
+
+# ── System dependencies ───────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Python dependencies ───────────────────────────────────────────────────────
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir --timeout 300 -r requirements.txt
+
+# ── Application code ──────────────────────────────────────────────────────────
+COPY validator/          ./validator/
+COPY validator_app.py    ./validator_app.py
+COPY hitl_review.py      ./hitl_review.py
+COPY excel_hitl.py       ./excel_hitl.py
+COPY config.py           ./config.py
+COPY entities_list.txt   ./entities_list.txt
+COPY .streamlit/         ./.streamlit/
+
+# ── Runtime directories ───────────────────────────────────────────────────────
+RUN mkdir -p /app/decisions /tmp/validator_output
+
+# ── Environment ───────────────────────────────────────────────────────────────
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8501 \
+    HOST=0.0.0.0
+
+EXPOSE 8501
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+
+ENTRYPOINT ["streamlit", "run", "validator_app.py", \
+            "--server.port=8501", "--server.address=0.0.0.0", \
+            "--server.headless=true"]

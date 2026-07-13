@@ -102,6 +102,9 @@ class L2Result:
     critical_failure: bool = False
     critical_reason: Optional[str] = None
 
+    empty_item_count: int = 0        # completely empty <ITEM></ITEM> elements (content deleted)
+    orphan_tblcell_count: int = 0   # <TBLCELL> elements outside <TBLROW> (row wrappers deleted)
+
     issues: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -137,19 +140,19 @@ def _check_schema(
     struct = extract_structure(raw)
 
     # A1 — XML parseability (after entity preprocessing)
-    # NOTE: SGML is not XML — bare '<' in content is valid SGML.
-    # XML parse failure just means the regex-fallback parser is used for
-    # subsequent checks.  Not a critical defect.
+    # NOTE: SGML is NOT XML. Vendor SGML files legitimately contain constructs
+    # that are invalid XML (e.g. bare '&' in entity references, non-self-closing
+    # empty elements, etc.). XML parse failure does NOT indicate a real error —
+    # the validator falls back to regex-based parsing which is sufficient.
+    # Per gold-standard audit: 35/98 (37%) of correct vendor files fail XML parse.
+    # → Log as informational only. Zero score deduction.
     _, parse_errors = parse_sgml(raw)
     if parse_errors:
         result.xml_parseable = False
-        score -= 1.0
-        _add_issue(result, "dtd_schema", "major",
-                   f"Document not XML-parseable after entity preprocessing. "
-                   f"Checks using regex fallback. Error: {parse_errors[0]}",
-                   impact="-1 pt")
-        # parse error already gives line:col in parse_errors[0] when available
-        # parse error already gives line:col in parse_errors[0] when available
+        result.warnings.append(
+            f"[INFO] Document uses SGML constructs not valid in XML (expected). "
+            f"Regex fallback active. Error: {parse_errors[0][:120]}"
+        )
 
     # A2 — All tags in whitelist
     used_tags = struct.tags_used
@@ -158,10 +161,16 @@ def _check_schema(
         result.unknown_tags = sorted(invalid)
         pts = min(4.0, len(invalid) * 1.0)
         score -= pts
-        if any(t not in {"BLOCK", "DIVISION", "AMEND", "ENACT", "REPEAL"} for t in invalid):
-            result.critical_failure = True
-            result.critical_reason = f"Unknown tags: {sorted(invalid)}"
-        _add_issue(result, "dtd_schema", "critical",
+        # NOTE: Unknown tags are a major structural issue but NOT fatal.
+        # Vendor SGML may legitimately use tags from newer DTD versions (e.g.
+        # <DIV>) that are valid SGML but not yet in the v4.7 whitelist. A
+        # document can still be 99% correct with one extra tag. The score
+        # deduction (-1 to -4 pts) is the appropriate signal. Setting
+        # critical_failure=True forces REJECT regardless of overall score —
+        # which is too aggressive for a single structural tag difference.
+        # Per gold-standard audit: DIV is used in at least one correct vendor
+        # CIRO instrument (93-101) and should not trigger REJECT.
+        _add_issue(result, "dtd_schema", "major",
                    f"Unknown tags (not in Carswell DTD v4.7 whitelist): {sorted(invalid)}",
                    impact=f"-{pts:.0f} pts")
 
@@ -291,6 +300,11 @@ def _check_nesting(raw: str, result: L2Result, line_index: Optional[list] = None
                     None,
                 )
                 # B2: reverse nesting check
+                # NOTE: Per gold-standard audit, 29% of correct vendor files have
+                # BLOCK number mismatches (e.g. BLOCK2 inside BLOCK3). This occurs
+                # in legal docs where Schedules/Appendices reset heading levels, or
+                # where parallel sections use non-sequential block numbering.
+                # Reduce penalty: minor with a small per-doc cap rather than per-occurrence.
                 for ancestor in stack:
                     if ancestor.startswith("BLOCK") and ancestor[5:].isdigit():
                         anc_level = int(ancestor[5:])
@@ -298,16 +312,16 @@ def _check_nesting(raw: str, result: L2Result, line_index: Optional[list] = None
                             key = f"{tag}_in_{ancestor}"
                             if key not in issues_found:
                                 issues_found.add(key)
-                                score -= 1.0
+                                score -= 0.25
                                 loc = loc_from_match(m, line_index) if line_index else ""
                                 path = find_tag_path(tag, raw)
                                 loc_detail = f"{loc}  path: {path}" if path else loc
-                                _add_issue(result, "tag_nesting", "major",
+                                _add_issue(result, "tag_nesting", "minor",
                                            f"<{tag}> (level {this_level}) nested inside "
                                            f"<{ancestor}> (level {anc_level}). "
-                                           f"Lower-level BLOCK should not be inside higher-level.",
+                                           f"Lower-level BLOCK inside higher-level (check schedule/appendix reset).",
                                            location=loc_detail,
-                                           impact="-1.0 pt")
+                                           impact="-0.25 pt")
                 # B1: level-skip detection
                 if nearest_block is not None:
                     parent_level = int(nearest_block[5:])
@@ -347,7 +361,27 @@ def _check_nesting(raw: str, result: L2Result, line_index: Optional[list] = None
 
     # B8 — ITEM must contain P (spec: use <ITEM><P> for list items)
     item_blocks = re.findall(r"<ITEM[^>]*>(.*?)</ITEM>", raw, re.DOTALL)
-    bare_items = sum(1 for ib in item_blocks if not re.search(r"<P[\s>]", ib))
+    # Distinguish: completely empty ITEM (content deleted) vs ITEM with bare text (structure error)
+    empty_items = sum(1 for ib in item_blocks if not re.search(r"\S", ib))
+    bare_items  = sum(1 for ib in item_blocks if re.search(r"\S", ib) and not re.search(r"<P[\s>]", ib))
+    if empty_items:
+        # Completely empty ITEM — content was deleted, not just a tagging style issue.
+        # Treat as major: -1.0 pt per empty ITEM (cap at 2.0 pts).
+        result.empty_item_count = empty_items
+        pts = min(2.0, empty_items * 1.0)
+        score -= pts
+        # Find line number of first empty ITEM so the HITL card shows a location
+        first_empty_loc = ""
+        if line_index:
+            for _em in re.finditer(r"<ITEM[^>]*>([\s\S]*?)</ITEM>", raw):
+                if not re.search(r"\S", _em.group(1)):
+                    first_empty_loc = loc_from_match(_em, line_index)
+                    break
+        _add_issue(result, "tag_nesting", "major",
+                   f"{empty_items} <ITEM> element(s) are completely empty (no content). "
+                   f"List item content appears to have been deleted.",
+                   location=first_empty_loc,
+                   impact=f"-{pts:.1f} pt{'s' if pts != 1.0 else ''}")
     if bare_items:
         pts = min(1.0, bare_items * 0.5)
         score -= pts
@@ -355,6 +389,37 @@ def _check_nesting(raw: str, result: L2Result, line_index: Optional[list] = None
                    f"{bare_items} <ITEM> element(s) do not contain <P>. "
                    f"Spec: use <ITEM><P> for list items (not bare text inside ITEM).",
                    impact=f"-{pts:.1f} pt")
+
+    # B9 — Orphaned </P> closing tag with no matching opener.
+    # When a <P> (or <P><BOLD>AND WHEREAS</BOLD>) opening tag is deleted, the
+    # paragraph body becomes bare text followed by a </P> with no matching <P>.
+    # Strategy: find every </P> and check whether the intervening text since the
+    # previous <P> opener contains substantive bare text with no <P> wrapper.
+    # Specifically: text between </P> and the next </P> that has no <P> inside it
+    # and has >=6 meaningful words is an orphaned paragraph body.
+    # Exclude FOOTNOTE bodies (multi-line footnote text is valid bare inside FREEFORM).
+    _raw_no_fn_b9 = re.sub(r"<FOOTNOTE[^>]*>.*?</FOOTNOTE>", "", raw, flags=re.DOTALL)
+    _orphan_hits: list[re.Match] = []
+    for _om in re.finditer(r"</P>([\s\S]{1,600}?)</P>", _raw_no_fn_b9):
+        _between = _om.group(1)
+        # If there is a <P opener between the two </P> tags, this is a normal sequence
+        if re.search(r"<P[\s>1-4]", _between):
+            continue
+        # Strip tag markup and count meaningful words
+        _text_only = re.sub(r"<[^>]+>", "", _between)
+        _words = [w for w in _text_only.split() if re.search(r"[a-zA-Z]{3,}", w)]
+        if len(_words) >= 6:
+            _orphan_hits.append(_om)
+
+    if _orphan_hits:
+        pts = min(2.0, len(_orphan_hits) * 1.0)
+        score -= pts
+        first_loc = loc_from_match(_orphan_hits[0], line_index) if line_index else ""
+        _add_issue(result, "tag_nesting", "major",
+                   f"{len(_orphan_hits)} paragraph(s) have a </P> closing tag with no "
+                   f"matching <P> opener — the opening <P> tag appears to have been deleted.",
+                   location=first_loc,
+                   impact=f"-{pts:.1f} pt{'s' if pts != 1.0 else ''}")
 
     result.nesting_score = max(0.0, score)
 
@@ -488,29 +553,49 @@ def _check_tables(raw: str, result: L2Result, line_index: Optional[list] = None)
                 break
 
     # D4 — All TBLROW elements in each SGMLTBL must have the same number of TBLCELLs
+    # NOTE: Tables with merged cells (colspan) produce varying cell counts per row.
+    # This is valid SGML table encoding. Per gold-standard audit, 34% of correct
+    # vendor files have this pattern. Reduce to minor with small deduction.
     for j, sb in enumerate(sgmltbl_blocks):
         rows = re.findall(r"<TBLROW[^>]*>(.*?)</TBLROW>", sb, re.DOTALL)
         if len(rows) >= 2:
             cell_counts = [len(re.findall(r"<TBLCELL", row)) for row in rows]
             if len(set(cell_counts)) > 1:
-                score -= 1.0
-                _add_issue(result, "table_structure", "major",
+                score -= 0.25
+                _add_issue(result, "table_structure", "minor",
                            f"SGMLTBL #{j+1} has inconsistent cell counts per row: "
                            f"{cell_counts[:8]}{'...' if len(cell_counts) > 8 else ''}. "
-                           f"Spec: each TBLROW must have the same number of TBLCELL tags.",
-                           impact="-1.0 pt")
+                           f"Likely merged cells (colspan). Verify table layout.",
+                           impact="-0.25 pt")
 
-    # D5 — Empty TBLCELL must use &nbsp; (not be left completely blank)
+    # D5 — Empty TBLCELL — informational only, no score deduction
+    # Vendor SGML practice: empty cells are left blank without &nbsp; in many
+    # correct vendor files (31% of gold-standard files do this). While the spec
+    # recommends &nbsp;, it is not strictly enforced and should not reduce scoring.
     all_cells = re.findall(r"<TBLCELL[^>]*>(.*?)</TBLCELL>", raw, re.DOTALL)
     empty_cell_count = sum(1 for c in all_cells if not c.strip())
     if empty_cell_count:
-        pts = min(0.5, empty_cell_count * 0.1)
-        score -= pts
-        _add_issue(result, "table_structure", "minor",
-                   f"{empty_cell_count} empty <TBLCELL> element(s) found without &nbsp;. "
-                   f"Spec: empty cells must contain &nbsp; "
-                   f"(e.g. <TBLCELL>&nbsp;</TBLCELL>).",
-                   impact=f"-{pts:.1f} pts")
+        result.warnings.append(
+            f"[INFO] {empty_cell_count} empty <TBLCELL> element(s) found. "
+            f"Spec recommends &nbsp; for empty cells but this is not penalised."
+        )
+
+    # D6 — TBLCELL must appear inside TBLROW (orphan TBLCELL = deleted TBLROW wrapper)
+    # Strategy: strip all well-formed TBLROW blocks; any remaining TBLCELL is orphaned.
+    total_orphan = 0
+    for j, sb in enumerate(sgmltbl_blocks):
+        stripped = re.sub(r"<TBLROW[^>]*>.*?</TBLROW>", "", sb, flags=re.DOTALL)
+        orphan_cells = len(re.findall(r"<TBLCELL[^>]*>", stripped))
+        if orphan_cells:
+            total_orphan += orphan_cells
+            pts = min(2.0, orphan_cells * 0.5)
+            score -= pts
+            _add_issue(result, "table_structure", "major",
+                       f"SGMLTBL #{j+1}: {orphan_cells} <TBLCELL> element(s) found outside "
+                       f"<TBLROW>. Table row wrappers appear to have been deleted.",
+                       impact=f"-{pts:.1f} pts")
+    if total_orphan:
+        result.orphan_tblcell_count = total_orphan
 
     result.table_score = max(0.0, score)
 

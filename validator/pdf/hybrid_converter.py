@@ -36,12 +36,6 @@ from typing import Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
-# Suppress noisy pdfplumber/pdfminer font-descriptor warnings that appear when
-# a PDF has malformed font metrics (FontBBox = None). These do not affect
-# conversion output — pdfplumber falls back to default glyph widths.
-logging.getLogger("pdfminer").setLevel(logging.ERROR)
-logging.getLogger("pdfplumber").setLevel(logging.ERROR)
-
 # ── Optional imports — fail gracefully so pipeline can still load ─────────────
 try:
     import fitz  # PyMuPDF
@@ -74,6 +68,7 @@ from .formatting_extractor import (
     is_bold,
     is_italic,
     detect_heading_level,
+    detect_heading_level_block,
 )
 from .deduplicator import deduplicate
 from .layout_analyzer import sort_blocks_by_reading_order, merge_page_breaks
@@ -144,127 +139,14 @@ _TABLE_SETTINGS_TEXT = {
     "horizontal_strategy": "text",
     "snap_tolerance":       3,
     "join_tolerance":       3,
-    "min_words_vertical":   4,   # raised from 2 — suppresses text-alignment FPs
-    "min_words_horizontal": 2,   # raised from 1
+    "min_words_vertical":   2,
+    "min_words_horizontal": 1,
 }
-
-# Maximum table area as a fraction of page area before a detected table is
-# considered a layout artefact and discarded.
-# Legal PDFs routinely wrap entire pages in a single table for layout purposes;
-# accepting such tables causes the deduplicator to remove almost all body text.
-# "lines": generous — real ruled tables (forms, schedules) can be large.
-# "text" : strict  — text-column detection is very prone to false positives.
-_MAX_TABLE_AREA_FRAC_LINES = 0.70   # >70% of page → layout container, not data
-_MAX_TABLE_AREA_FRAC_TEXT  = 0.25   # >25% of page → body text falsely detected
-_MAX_TABLE_ROWS_TEXT        = 15     # >15 rows via text strategy → almost certainly FP
 
 # Footnote detection: small font + bottom of page
 _FOOTNOTE_Y_FRAC = 0.82      # bottom 18% of page
 _FOOTNOTE_SIZE_DELTA = 2.0   # font ≥ 2pt smaller than body
 _FOOTNOTE_MARKER_RE = re.compile(r"^\s*(?:\d{1,3}|[*†‡§¶])\s+\S")
-
-# ── Web-page PDF chrome filter ────────────────────────────────────────────────
-# TMX/TSX/MX website PDFs contain navigation chrome (breadcrumbs, stock tickers,
-# footer links, social icons) that pollutes the extracted text.
-# Fingerprint: any block contains \uf054 (breadcrumb arrow glyph used by TMX sites).
-
-# PUA (Private Use Area) unicode — font icon glyphs, not real text
-_PUA_RE = re.compile(r"[\ue000-\uf8ff]")
-
-# Known web footer/nav link text patterns (full-line match, case-insensitive)
-_WEB_FOOTER_LINE_RE = re.compile(
-    r"^(contact\s+us|terms\s+of\s+use|privacy\s+policy|"
-    r"accessibility|fraud\s+prevention|sign\s+in|"
-    r"trading\s+status|fran[çc]ais|"
-    r"capital\s+formation|post-trade|post\s+trade|insights|"
-    r"copyright[\s\S]{0,60}rights\s+reserved|"
-    r"copyright\s*[©\u00a9©]|[©\u00a9©]\s*\d{4}|all\s+rights\s+reserved)$",
-    re.IGNORECASE,
-)
-
-# Legal disclaimer text unique to TMX Group pages
-_TMX_DISCLAIMER_RE = re.compile(
-    r"^TMX\s+Group\s+Limited\s+and\s+its\s+affiliates\s+do\s+not",
-    re.IGNORECASE,
-)
-
-
-def _is_web_chrome_block(block: Dict) -> bool:
-    """
-    Return True if this block is web-page chrome (nav/header/footer)
-    that should be stripped from web-page PDFs (TMX/TSX/MX website prints).
-    Only called when the PDF has been identified as a web-page PDF.
-    """
-    text = block.get("text", "")
-    stripped = text.strip()
-    if not stripped:
-        return False
-
-    # Breadcrumb navigation arrow glyph (specific to TMX website PDFs)
-    if "\uf054" in text:
-        return True
-
-    # Block consisting entirely of PUA/icon characters (social-media icons, etc.)
-    non_ws = re.sub(r"\s", "", stripped)
-    if non_ws and all(_PUA_RE.match(c) for c in non_ws):
-        return True
-
-    # Stock ticker / site-navigation bar at very top of first page (y0 < 55pt)
-    if block.get("page", 0) == 0:
-        y0 = block.get("bbox", (0, 0, 0, 0))[1]
-        if y0 < 55:
-            return True
-
-    # Known footer/nav patterns — check each line individually
-    for line in stripped.split("\n"):
-        # Strip trailing icon glyphs before matching
-        line_clean = _PUA_RE.sub("", line).strip()
-        if line_clean and _WEB_FOOTER_LINE_RE.match(line_clean):
-            return True
-
-    # TMX legal disclaimer
-    if _TMX_DISCLAIMER_RE.match(stripped):
-        return True
-
-    # Copyright notice (handles encoding variants of ©, trailing period, etc.)
-    if re.search(r"copyright.{0,80}reserved", stripped, re.IGNORECASE | re.DOTALL):
-        return True
-
-    return False
-
-
-# ── Coordinate helpers ────────────────────────────────────────────────────────
-
-def _rotate_bbox_to_visual(
-    bbox: tuple, rotation: int, mw: float, mh: float
-) -> tuple:
-    """
-    Transform a raw PyMuPDF block bbox (in mediabox coordinates) to the
-    visual/display coordinate space by applying the page rotation.
-
-    PyMuPDF's get_text('dict') returns bbox values in the un-rotated mediabox
-    coordinate space.  For y0-based sorting to produce the correct reading
-    order the bboxes must be in display coordinates (origin = top-left,
-    y increasing downward, after the rotation is applied).
-
-    Args:
-        bbox:     (x0, y0, x1, y1) in raw mediabox coordinates
-        rotation: page rotation in degrees (0 / 90 / 180 / 270)
-        mw:       mediabox width  before rotation
-        mh:       mediabox height before rotation
-    """
-    if not rotation:
-        return bbox
-    x0, y0, x1, y1 = bbox
-    if rotation == 90:
-        # visual_x = mh - raw_y,  visual_y = raw_x
-        return (mh - y1, x0, mh - y0, x1)
-    if rotation == 180:
-        return (mw - x1, mh - y1, mw - x0, mh - y0)
-    if rotation == 270:
-        # visual_x = raw_y,  visual_y = mw - raw_x
-        return (y0, mw - x1, y1, mw - x0)
-    return bbox
 
 
 # ── Main extraction functions ─────────────────────────────────────────────────
@@ -299,11 +181,6 @@ def _extract_pymupdf(pdf_path: str) -> Tuple[List[Dict], Dict, int]:
         page_height = page_rect.height
         page_width  = page_rect.width
 
-        # Rotation info needed to convert raw block bboxes → visual coordinates
-        page_rotation = page.rotation          # 0 / 90 / 180 / 270
-        page_mw       = page.mediabox.width    # raw (pre-rotation) page width
-        page_mh       = page.mediabox.height   # raw (pre-rotation) page height
-
         page_dict = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
 
         # Collect all spans from this page for body-size computation
@@ -331,19 +208,8 @@ def _extract_pymupdf(pdf_path: str) -> Tuple[List[Dict], Dict, int]:
             block_italic = False
             block_heading = 0
 
-            for line_idx, line in enumerate(blk.get("lines", [])):
+            for line in blk.get("lines", []):
                 line_text_parts = []
-                prev_span_x1 = None
-                # Insert a space between adjacent lines so span-based rendering
-                # doesn't concatenate the last word of line N with the first word
-                # of line N+1 (e.g. "the\nopening" → "theopening").
-                if line_idx > 0 and block_spans:
-                    last = block_spans[-1]["text"]
-                    if not last.endswith(" "):
-                        block_spans.append({
-                            "text": " ", "bold": False, "italic": False,
-                            "superscript": False, "size": body_size, "font": "",
-                        })
                 for span in line.get("spans", []):
                     # Use pre-classified span from our list
                     cspan = classified_spans[span_idx] if span_idx < len(classified_spans) else span
@@ -352,19 +218,6 @@ def _extract_pymupdf(pdf_path: str) -> Tuple[List[Dict], Dict, int]:
                     t = span.get("text", "")
                     if not t:
                         continue
-
-                    # Insert a space if there is a visible horizontal gap between
-                    # consecutive spans (PyMuPDF does not add spaces at span boundaries).
-                    span_bbox = span.get("bbox", (0, 0, 0, 0))
-                    if prev_span_x1 is not None:
-                        gap = span_bbox[0] - prev_span_x1
-                        char_w = span.get("size", body_size) * 0.4
-                        if (gap > char_w
-                                and line_text_parts
-                                and not line_text_parts[-1].endswith(" ")
-                                and not t.startswith(" ")):
-                            line_text_parts.append(" ")
-                    prev_span_x1 = span_bbox[2]
 
                     line_text_parts.append(t)
                     block_spans.append({
@@ -395,36 +248,13 @@ def _extract_pymupdf(pdf_path: str) -> Tuple[List[Dict], Dict, int]:
             if not raw_text:
                 continue
 
-            # Promote short bold single-line blocks to H4 when not already
-            # detected as a heading by font size (handles bold headings at body size).
-            # Conditions: starts with uppercase (excludes list labels like "(a)", "-AND"),
-            # single line, ≤ 60 chars, no trailing sentence-end punctuation, last word
-            # is not a preposition/conjunction (avoids mid-sentence continuations).
-            _raw_last = (raw_text.rsplit(None, 1)[-1].rstrip(".,;:!?)]}\"'").lower()
-                         if raw_text else "")
-            _HEADING_STOP_WORDS = frozenset([
-                "of", "the", "a", "an", "to", "in", "at", "by", "for", "and",
-                "or", "nor", "but", "as", "that", "which", "with", "from",
-                "into", "upon", "under", "over", "through", "not", "if",
-                "is", "are", "was", "were", "be", "been", "has", "have",
-                "had", "will", "would", "shall", "should", "may", "might",
-                "can", "could", "than", "its", "their", "this", "these",
-            ])
-            if (block_heading == 0 and block_bold
-                    and len(block_text_parts) == 1
-                    and len(raw_text) <= 60
-                    and raw_text and raw_text[0].isupper()
-                    and not raw_text[:4].lower() in ("and ", "or n", "nor ", "but ")
-                    and not raw_text.endswith(".")
-                    and not raw_text.endswith(",")
-                    and not raw_text.endswith(";")
-                    and _raw_last not in _HEADING_STOP_WORDS):
-                block_heading = 4
+            # Apply block-level heading detection (adds bold+short heuristic
+            # on top of the span-level size-only detection).
+            block_heading = detect_heading_level_block(
+                dominant_size, body_size, block_bold, raw_text
+            )
 
             bbox = tuple(blk.get("bbox", (0, 0, 0, 0)))
-            # Transform to visual coordinates so sorting works on rotated pages
-            if page_rotation:
-                bbox = _rotate_bbox_to_visual(bbox, page_rotation, page_mw, page_mh)
             y0 = bbox[1]
 
             raw_blocks.append({
@@ -443,18 +273,6 @@ def _extract_pymupdf(pdf_path: str) -> Tuple[List[Dict], Dict, int]:
             })
 
     doc.close()
-
-    # ── Web-page PDF chrome filter ──────────────────────────────────────────
-    # Detect TMX/TSX/MX website PDFs by the breadcrumb arrow glyph (\uf054).
-    # If found, strip all navigation/footer chrome blocks from every page.
-    if any("\uf054" in b.get("text", "") for b in raw_blocks):
-        before = len(raw_blocks)
-        raw_blocks = [b for b in raw_blocks if not _is_web_chrome_block(b)]
-        log.debug(
-            "Web-page PDF detected — filtered %d chrome blocks (%d remaining)",
-            before - len(raw_blocks), len(raw_blocks),
-        )
-
     log.debug("PyMuPDF: extracted %d blocks from %d pages", len(raw_blocks), page_count)
     return raw_blocks, metadata, page_count
 
@@ -465,10 +283,6 @@ def _extract_pdfplumber_tables(pdf_path: str) -> List[TableStructure]:
 
     Tries line-based strategy first; if a page has no tables detected,
     retries with text-based strategy (handles borderless tables).
-
-    For each table, the exact bbox is retrieved from the pdfplumber Table
-    object (find_tables) using the SAME strategy that produced the data,
-    so the bbox always corresponds to the extracted rows.
     """
     if not _PDFPLUMBER_OK:
         log.warning("pdfplumber not available — no table extraction")
@@ -479,20 +293,13 @@ def _extract_pdfplumber_tables(pdf_path: str) -> List[TableStructure]:
     try:
         with pdfplumber.open(pdf_path) as pdf:
             for page_num, page in enumerate(pdf.pages):
-                page_w = float(page.width)
-                page_h = float(page.height)
+                page_tables = page.extract_tables(_TABLE_SETTINGS_LINES)
 
-                # ── Try lines strategy first, then text strategy fallback ─────
-                strategy_used = "lines"
-                found_objects = page.find_tables(_TABLE_SETTINGS_LINES)
-                page_tables   = [t.extract() for t in found_objects] if found_objects else []
-
+                # If lines strategy found nothing, try text strategy
                 if not page_tables:
-                    strategy_used = "text"
-                    found_objects = page.find_tables(_TABLE_SETTINGS_TEXT)
-                    page_tables   = [t.extract() for t in found_objects] if found_objects else []
+                    page_tables = page.extract_tables(_TABLE_SETTINGS_TEXT)
 
-                for tbl_obj, pt in zip(found_objects, page_tables):
+                for pt in page_tables:
                     if not pt:
                         continue
 
@@ -508,65 +315,29 @@ def _extract_pdfplumber_tables(pdf_path: str) -> List[TableStructure]:
                     if not cleaned:
                         continue
 
-                    # Get exact bbox from the Table object (same strategy, guaranteed match)
+                    # Compute table bbox from pdfplumber page
+                    # Use bounding box of the extracted table object if available
+                    # pdfplumber doesn't expose table bbox directly — derive from cells
+                    # Use page dimensions as conservative fallback
+                    page_w = float(page.width)
+                    page_h = float(page.height)
+
+                    # Find physical table bbox by checking page objects
+                    t_bbox = (0.0, 0.0, page_w, page_h)
                     try:
-                        fb = tbl_obj.bbox   # (x0, top, x1, bottom) in PDF points
-                        t_bbox = (float(fb[0]), float(fb[1]), float(fb[2]), float(fb[3]))
+                        # pdfplumber Page.find_tables() gives table objects with bbox
+                        found = page.find_tables(_TABLE_SETTINGS_LINES)
+                        if not found:
+                            found = page.find_tables(_TABLE_SETTINGS_TEXT)
+                        if found and len(found) >= 1:
+                            idx = page_tables.index(pt) if pt in page_tables else 0
+                            if idx < len(found):
+                                fb = found[idx].bbox
+                                t_bbox = (fb[0], fb[1], fb[2], fb[3])
                     except Exception:
-                        t_bbox = (0.0, 0.0, page_w, page_h)
-
-                    # ── False-positive filter: reject oversized / phantom tables ──────
-                    # When a "table" covers the majority of the page it is almost always
-                    # a layout-as-table artefact, not a real data table.  Keeping it
-                    # causes the deduplicator to erase nearly all body text.
-                    t_area    = (t_bbox[2] - t_bbox[0]) * (t_bbox[3] - t_bbox[1])
-                    page_area = page_w * page_h
-                    area_frac = t_area / page_area if page_area > 0 else 0.0
-                    row_count = len(cleaned)
-
-                    if strategy_used == "lines":
-                        if area_frac > _MAX_TABLE_AREA_FRAC_LINES:
-                            log.debug(
-                                "Skip lines-table page %d: %.0f%% of page (layout artefact)",
-                                page_num, area_frac * 100,
-                            )
-                            continue
-                    else:  # "text" strategy — much stricter
-                        if area_frac > _MAX_TABLE_AREA_FRAC_TEXT or row_count > _MAX_TABLE_ROWS_TEXT:
-                            log.debug(
-                                "Skip text-table page %d: %.0f%% of page, %d rows (false positive)",
-                                page_num, area_frac * 100, row_count,
-                            )
-                            continue
+                        pass
 
                     col_count = max((len(r) for r in cleaned), default=0)
-
-                    # A genuine table needs ≥2 columns WITH actual content, AND
-                    # at least 2 rows where multiple columns are simultaneously
-                    # non-empty.  Pseudo-tables from bordered or two-column-text
-                    # layouts may have 2 nominal columns but content in only ONE
-                    # column per row (the other column being a phantom separator
-                    # or a header reference in a separate row).
-                    cols_with_content: set = set()
-                    rows_with_multicol: int = 0
-                    for r in cleaned:
-                        nonempty_in_row = [
-                            ci for ci, cell in enumerate(r)
-                            if cell and cell.strip()
-                        ]
-                        cols_with_content.update(nonempty_in_row)
-                        if len(nonempty_in_row) >= 2:
-                            rows_with_multicol += 1
-
-                    nonempty_col_count = len(cols_with_content)
-                    if nonempty_col_count < 2 or rows_with_multicol < 2:
-                        log.debug(
-                            "Skip pseudo-table page %d: %d non-empty cols, "
-                            "%d multicol rows (layout artefact, bbox=%s)",
-                            page_num, nonempty_col_count, rows_with_multicol, t_bbox,
-                        )
-                        continue
-
                     tables.append(TableStructure(
                         rows=cleaned,
                         bbox=t_bbox,
@@ -641,7 +412,7 @@ def _raw_to_textblocks(raw_blocks: List[Dict]) -> List[TextBlock]:
                 font        = s.get("font", ""),
             )
             for s in b.get("spans", [])
-            if s.get("text", "")
+            if s.get("text", "").strip()
         ]
         result.append(TextBlock(
             text       = b.get("text", ""),
@@ -698,22 +469,54 @@ def _build_docx(structured: StructuredPDF) -> "Document":
                 continue
 
             if blk.is_heading > 0:
+                # Headings stay as a single paragraph with Word heading style
                 style = f"Heading {min(blk.is_heading, 4)}"
                 try:
                     para = doc.add_paragraph(blk.text.strip(), style=style)
                 except Exception:
                     para = doc.add_paragraph(blk.text.strip())
             else:
-                para = doc.add_paragraph()
-                para.style = doc.styles["Normal"]
-                if blk.spans:
-                    for span in blk.spans:
-                        if span.text:
-                            _add_run(para, span)
-                else:
-                    run = para.add_run(blk.text)
-                    run.bold   = blk.is_bold
-                    run.italic = blk.is_italic
+                # Body blocks: split on newlines so each visual line / sentence
+                # becomes its own DOCX paragraph.  PyMuPDF groups entire page
+                # columns into one block with \n-separated lines, so without
+                # this split a 600-paragraph doc arrives as ~20 blocks and the
+                # pipeline cannot produce fine-grained SGML tags.
+                lines = [l.strip() for l in blk.text.split("\n") if l.strip()]
+                if not lines:
+                    lines = [blk.text.strip()]
+
+                # Build a span index so we can try to match spans to lines
+                span_texts = [s.text for s in blk.spans if s.text.strip()]
+
+                for line_text in lines:
+                    para = doc.add_paragraph()
+                    para.style = doc.styles["Normal"]
+
+                    # Try to find spans that belong to this line for inline bold/italic
+                    matched_spans = [s for s in blk.spans if s.text and s.text.strip() and s.text.strip() in line_text]
+                    if matched_spans:
+                        # Reconstruct the line with inline formatting from matching spans
+                        remaining = line_text
+                        for span in matched_spans:
+                            st = span.text.strip()
+                            idx = remaining.find(st)
+                            if idx < 0:
+                                continue
+                            if idx > 0:
+                                para.add_run(remaining[:idx])
+                            run = para.add_run(st)
+                            run.bold   = span.bold
+                            run.italic = span.italic
+                            if span.superscript:
+                                run.font.superscript = True
+                            remaining = remaining[idx + len(st):]
+                        if remaining:
+                            para.add_run(remaining)
+                    else:
+                        # No span match — emit plain run with block-level styling
+                        run = para.add_run(line_text)
+                        run.bold   = blk.is_bold
+                        run.italic = blk.is_italic
 
         elif kind == "table":
             tbl: TableStructure = obj  # type: ignore[assignment]

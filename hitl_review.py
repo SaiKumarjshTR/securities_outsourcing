@@ -29,10 +29,41 @@ from pathlib import Path
 from datetime import datetime
 
 import streamlit as st
+import streamlit.components.v1 as _st_components
 from config import DECISIONS_FILE
 
 # ── path setup ────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
+
+# ── validator live-patch (bypass frozen bytecode) ─────────────────────────────
+# PyInstaller compiles validator.* into frozen bytecode inside the EXE at build
+# time.  This patcher inserts a meta-path finder BEFORE FrozenImporter so that
+# Python loads validator.* from the .py files in _internal/ instead.  Hotfixes
+# to validator/*.py therefore take effect without rebuilding the EXE.
+import importlib.util as _ilu
+
+class _ValidatorFilePatcher:
+    _root = Path(__file__).parent.resolve()
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != "validator" and not fullname.startswith("validator."):
+            return None
+        rel = fullname.replace(".", "/")
+        for p in [self._root / (rel + ".py"), self._root / rel / "__init__.py"]:
+            if p.exists():
+                slocs = [str(p.parent)] if p.name == "__init__.py" else None
+                return _ilu.spec_from_file_location(fullname, p,
+                           submodule_search_locations=slocs)
+        return None
+
+if not any(type(f).__name__ == "_ValidatorFilePatcher" for f in sys.meta_path):
+    sys.meta_path.insert(0, _ValidatorFilePatcher())
+
+# Evict any already-loaded frozen validator modules so they re-import from disk
+for _k in [k for k in list(sys.modules) if k == "validator" or k.startswith("validator.")]:
+    del sys.modules[_k]
+# ──────────────────────────────────────────────────────────────────────────────
+
 from validator.validator_main import validate, ValidationReport
 from validator.core.diff_generator import (
     generate_fixes,
@@ -42,12 +73,16 @@ from validator.core.diff_generator import (
 )
 
 # ── page config ───────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="TR SGML Validator — HITL Review",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# Guard: validator_app.py owns set_page_config when hosting both review modes.
+# pages/2_PDF_HITL_Review.py (converter) exec()s without _SKIP_PAGE_CONFIG,
+# so this runs normally in that context.
+if not globals().get("_SKIP_PAGE_CONFIG"):
+    st.set_page_config(
+        page_title="TR SGML Validator — HITL Review",
+        page_icon="⚖️",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
 
 # ── constants ─────────────────────────────────────────────────────────────────
 DECISION_COLOURS = {
@@ -326,15 +361,21 @@ def _render_fixes_panel(
 
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
-def _sidebar() -> tuple[Path | None, Path | None]:
-    st.sidebar.header("📂 Current Document")
+def _sidebar() -> tuple[Path | None, Path | None, Path | None]:
+    st.sidebar.header("📂 Document Upload")
 
     _auto_sgml:      str   | None = st.session_state.get("last_sgml_text")
     _auto_pdf:       bytes | None = st.session_state.get("last_pdf_bytes")
     _auto_pdf_name:  str          = st.session_state.get("last_pdf_name")  or "source.pdf"
     _auto_sgml_name: str          = st.session_state.get("last_sgml_name") or "pipeline_output.sgm"
+    _auto_docx:      bytes | None = st.session_state.get("last_docx_bytes")
+    _auto_docx_name: str          = st.session_state.get("last_docx_name") or ""
 
+    sgml_path = pdf_path = docx_path = None
+
+    # ── Mode: pipeline (TR internal) vs manual upload (vendor) ───────────────
     if _auto_sgml:
+        # Loaded from pipeline — show info banner, no upload widgets needed
         st.sidebar.markdown(
             f'<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;'
             f'padding:8px 10px;font-size:0.82em;color:#0c4a6e">'
@@ -343,13 +384,8 @@ def _sidebar() -> tuple[Path | None, Path | None]:
             f'<span style="color:#0369a1">{_auto_sgml_name}</span></div>',
             unsafe_allow_html=True,
         )
-    else:
-        st.sidebar.warning("No pipeline output loaded.\nRun a conversion on the main page first.")
 
-    sgml_path = pdf_path = None
-
-    # ── Resolve from pipeline session state ───────────────────────────────────
-    if _auto_sgml:
+        # Resolve pipeline SGML to temp file
         _ck = f"_hitl_sgml_{_auto_sgml_name}"
         if _ck not in st.session_state or not Path(str(st.session_state[_ck])).exists():
             _td = tempfile.mkdtemp(prefix="hitl_auto_")
@@ -358,16 +394,98 @@ def _sidebar() -> tuple[Path | None, Path | None]:
             st.session_state[_ck] = str(_tp)
         sgml_path = Path(str(st.session_state[_ck]))
 
-    if _auto_pdf:
-        _ck2 = f"_hitl_pdf_{_auto_pdf_name}"
-        if _ck2 not in st.session_state or not Path(str(st.session_state[_ck2])).exists():
-            _td2 = tempfile.mkdtemp(prefix="hitl_pdf_")
-            _tp2 = Path(_td2) / _auto_pdf_name
-            _tp2.write_bytes(_auto_pdf)
-            st.session_state[_ck2] = str(_tp2)
-        pdf_path = Path(str(st.session_state[_ck2]))
+        if _auto_pdf:
+            _ck2 = f"_hitl_pdf_{_auto_pdf_name}"
+            if _ck2 not in st.session_state or not Path(str(st.session_state[_ck2])).exists():
+                _td2 = tempfile.mkdtemp(prefix="hitl_pdf_")
+                _tp2 = Path(_td2) / _auto_pdf_name
+                _tp2.write_bytes(_auto_pdf)
+                st.session_state[_ck2] = str(_tp2)
+            pdf_path = Path(str(st.session_state[_ck2]))
 
-    return sgml_path, pdf_path
+        if _auto_docx and _auto_docx_name:
+            _ck3 = f"_hitl_docx_{_auto_docx_name}"
+            if _ck3 not in st.session_state or not Path(str(st.session_state[_ck3])).exists():
+                _td3 = tempfile.mkdtemp(prefix="hitl_docx_")
+                _tp3 = Path(_td3) / _auto_docx_name
+                _tp3.write_bytes(_auto_docx)
+                st.session_state[_ck3] = str(_tp3)
+            docx_path = Path(str(st.session_state[_ck3]))
+
+    else:
+        # ── Vendor upload mode ────────────────────────────────────────────────
+        st.sidebar.markdown(
+            '<div style="background:#fefce8;border:1px solid #fde047;border-radius:6px;'
+            'padding:8px 10px;font-size:0.82em;color:#713f12;margin-bottom:8px">'
+            '<b>📤 Vendor Review Mode</b><br>'
+            'Upload the SGML file received from TR and the original source PDF.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        uploaded_sgml = st.sidebar.file_uploader(
+            "① Upload SGML file",
+            type=["sgm", "sgml", "xml", "txt"],
+            help="The .sgm file you received from the TR business team",
+            key="vendor_sgml_upload",
+        )
+        uploaded_pdf = st.sidebar.file_uploader(
+            "② Upload source PDF",
+            type=["pdf"],
+            help="The original source PDF document",
+            key="vendor_pdf_upload",
+        )
+
+        # Persist uploaded files across reruns using stable temp paths
+        if uploaded_sgml is not None:
+            _ck = f"_hitl_sgml_{uploaded_sgml.name}"
+            if (
+                _ck not in st.session_state
+                or not Path(str(st.session_state[_ck])).exists()
+                or st.session_state.get(f"{_ck}_size") != uploaded_sgml.size
+            ):
+                _td = tempfile.mkdtemp(prefix="hitl_vendor_sgml_")
+                _tp = Path(_td) / uploaded_sgml.name
+                _tp.write_bytes(uploaded_sgml.getvalue())
+                st.session_state[_ck] = str(_tp)
+                st.session_state[f"{_ck}_size"] = uploaded_sgml.size
+                # Clear any stale report/content from a previous file
+                st.session_state.pop("sgml_content", None)
+                st.session_state.pop("_report", None)
+                st.session_state.pop("_last_run", None)
+            sgml_path = Path(str(st.session_state[_ck]))
+
+        if uploaded_pdf is not None:
+            _ck2 = f"_hitl_pdf_{uploaded_pdf.name}"
+            if (
+                _ck2 not in st.session_state
+                or not Path(str(st.session_state[_ck2])).exists()
+                or st.session_state.get(f"{_ck2}_size") != uploaded_pdf.size
+            ):
+                _td2 = tempfile.mkdtemp(prefix="hitl_vendor_pdf_")
+                _tp2 = Path(_td2) / uploaded_pdf.name
+                _tp2.write_bytes(uploaded_pdf.getvalue())
+                st.session_state[_ck2] = str(_tp2)
+                st.session_state[f"{_ck2}_size"] = uploaded_pdf.size
+                st.session_state.pop("_report", None)
+                st.session_state.pop("_last_run", None)
+            pdf_path = Path(str(st.session_state[_ck2]))
+
+        # Status indicators
+        st.sidebar.markdown("---")
+        st.sidebar.markdown(
+            f"{'✅' if sgml_path else '⬜'} SGML: "
+            f"`{sgml_path.name if sgml_path else 'not uploaded'}`"
+        )
+        st.sidebar.markdown(
+            f"{'✅' if pdf_path else '⬜'} PDF: "
+            f"`{pdf_path.name if pdf_path else 'not uploaded'}`"
+        )
+
+        if sgml_path and not pdf_path:
+            st.sidebar.info("Upload the PDF to enable full L1/L4 validation.")
+
+    return sgml_path, pdf_path, docx_path
 
 
 # ── main review panel ─────────────────────────────────────────────────────────
@@ -421,6 +539,52 @@ def _render_report(
                     f"📌 L1: **{total} paragraph(s)** from PDF not found in SGML — "
                     "check fix cards below for details."
                 )
+
+    # ── D3 Two-stage text analysis ────────────────────────────────────────────
+    _l4r = report.l4
+    if _l4r is not None and getattr(_l4r, 'docx_available', False):
+        _abbyy_det = getattr(_l4r, 'abbyy_missing_paragraph_details', [])
+        _pipe_det  = getattr(_l4r, 'pipeline_missing_paragraph_details', [])
+        _total_gaps = len(_abbyy_det) + len(_pipe_det)
+        with st.expander(
+            f"📑 D3 Text Analysis — {_total_gaps} gap(s) "
+            f"({len(_abbyy_det)} ABBYY · {len(_pipe_det)} pipeline)",
+            expanded=_total_gaps > 0,
+        ):
+            def _conf_badge(conf: float) -> str:
+                # confidence = best match score for a MISSING paragraph
+                # Low score → clearly absent (hard gap). High score → borderline.
+                if conf < 0.30:
+                    return "🔴"   # hard miss — definitely absent
+                elif conf < 0.60:
+                    return "🟡"   # likely absent
+                else:
+                    return "🟢"   # borderline — verify manually (possible false positive)
+
+            if _abbyy_det:
+                st.markdown(
+                    "**⚠️ ABBYY extraction gaps** — paragraphs found in PDF but absent from "
+                    "ABBYY DOCX output. These *cannot* be fixed in the SGML editor:"
+                )
+                for _d in _abbyy_det:
+                    _conf = _d.get('confidence', 0.0)
+                    st.markdown(
+                        f"&nbsp;&nbsp;{_conf_badge(_conf)} `{_d['text'][:90]}` "
+                        f"— _{_d.get('method','?')}_ (best match {_conf:.0%})"
+                    )
+            if _pipe_det:
+                st.markdown(
+                    "**🔧 Pipeline gaps** — paragraphs in ABBYY DOCX but missing from SGML. "
+                    "These *can* be fixed via the SGML editor:"
+                )
+                for _d in _pipe_det:
+                    _conf = _d.get('confidence', 0.0)
+                    st.markdown(
+                        f"&nbsp;&nbsp;{_conf_badge(_conf)} `{_d['text'][:90]}` "
+                        f"— _{_d.get('method','?')}_ (best match {_conf:.0%})"
+                    )
+            if not _abbyy_det and not _pipe_det:
+                st.success("✅ All paragraphs accounted for in both ABBYY output and SGML.")
 
     # ── Generate actionable fixes ─────────────────────────────────────────────
     l4_raw = report.l4   # L4Result object (has d2_untagged_bold etc.)
@@ -504,7 +668,7 @@ def _render_report(
 
             _page = _doc[_page_n - 1]
             _pix = _page.get_pixmap(dpi=130)
-            st.image(_pix.tobytes("png"), use_container_width=True)
+            st.image(_pix.tobytes("png"), width="stretch")
             st.caption(f"Page {_page_n} of {_total_pages}")
             _doc.close()
 
@@ -546,38 +710,159 @@ def _render_report(
             unsafe_allow_html=True,
         )
 
+        st.markdown("**✏️ Edit SGML**", unsafe_allow_html=True)
+
+        # ── postMessage bridge: editor iframe → Streamlit textarea ────────────
+        # Runs once per page load; adds a listener on the parent window that
+        # finds the Streamlit textarea and injects the new value via React's
+        # native setter (bypasses the controlled-component guard).
+        _st_components.html("""<script>
+(function(){
+  var pw=window.parent;
+  if(pw._sgmlBridgeV3)return;
+  pw._sgmlBridgeV3=true;
+  pw.addEventListener('message',function(e){
+    if(!e.data||e.data.type!=='sgml_editor_update')return;
+    var val=e.data.value;
+    // Primary: find by aria-label set on the backing st.text_area
+    var ta=pw.document.querySelector('textarea[aria-label="sgml_editor_backing"]');
+    if(!ta){
+      // Fallback: longest textarea whose value contains SGML tags
+      var all=pw.document.querySelectorAll('textarea');
+      var best=0;
+      for(var i=0;i<all.length;i++){
+        var v=all[i].value||'';
+        if(v.indexOf('<')>=0&&v.length>best){best=v.length;ta=all[i];}
+      }
+    }
+    if(!ta)return;
+    var setter=Object.getOwnPropertyDescriptor(
+      pw.HTMLTextAreaElement.prototype,'value').set;
+    setter.call(ta,val);
+    ta.dispatchEvent(new pw.Event('input',{bubbles:true}));
+  });
+})();
+</script>""", height=1, scrolling=False)
+
+        # ── Self-contained editor: gutter + textarea in ONE iframe ────────────
+        _n_lines = current_sgml.count('\n') + 1
+        _escaped  = html.escape(current_sgml)
+        _editor_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;overflow:hidden;
+  font-family:'Courier New',monospace;font-size:13px}}
+.bar{{display:flex;align-items:center;gap:8px;padding:3px 8px;
+  background:#f1f5f9;border:1px solid #d1d5db;
+  border-radius:4px 4px 0 0;font-size:11px;color:#475569;white-space:nowrap;
+  flex-shrink:0}}
+.bar b{{color:#1e293b}}
+#gtl{{width:55px;padding:1px 4px;border:1px solid #cbd5e1;border-radius:3px;
+  font-family:inherit;font-size:11px}}
+.btn{{padding:2px 10px;border-radius:3px;border:1px solid #94a3b8;
+  background:#fff;cursor:pointer;font-size:11px;color:#334155}}
+.btn:hover{{background:#e2e8f0}}
+.abtn{{background:#2563eb;color:#fff;border-color:#1d4ed8;font-weight:600}}
+.abtn:hover{{background:#1d4ed8}}
+#msg{{color:#16a34a;font-style:italic;font-size:10px}}
+.wrap{{display:flex;flex:1;border:1px solid #d1d5db;border-top:none;
+  border-radius:0 0 4px 4px;overflow:hidden;height:430px}}
+#gutter{{background:#f8fafc;color:#94a3b8;text-align:right;
+  padding:8px 6px 8px 4px;border-right:2px solid #e2e8f0;
+  overflow:hidden;user-select:none;white-space:pre;
+  line-height:1.5;font-size:13px;min-width:52px;flex-shrink:0}}
+#ed{{flex:1;padding:8px;border:none;outline:none;resize:none;
+  font-family:'Courier New',monospace;font-size:13px;line-height:1.5;
+  overflow-y:scroll;white-space:pre;tab-size:2;color:#1a1a1a;background:#fff}}
+</style></head><body style="display:flex;flex-direction:column;height:100%">
+<div class="bar">
+  Lines:&nbsp;<b id="lc">{_n_lines}</b>&nbsp;│&nbsp;Go&nbsp;to&nbsp;line:
+  <input id="gtl" type="number" min="1" max="{_n_lines}">
+  <button class="btn" id="gob">Go</button>
+  &nbsp;│&nbsp;
+  <button class="abtn btn" id="applyb">✓&nbsp;Apply&nbsp;Changes</button>
+  &nbsp;<span id="msg"></span>
+</div>
+<div class="wrap">
+  <div id="gutter"></div>
+  <textarea id="ed" spellcheck="false">{_escaped}</textarea>
+</div>
+<script>
+var ed=document.getElementById('ed');
+var g=document.getElementById('gutter');
+var lc=document.getElementById('lc');
+var msg=document.getElementById('msg');
+
+function buildGutter(n){{
+  var a=[];
+  for(var i=1;i<=n;i++) a.push(('    '+i).slice(-4));
+  return a.join('\\n');
+}}
+
+function syncGutter(){{
+  var n=ed.value.split('\\n').length;
+  if(parseInt(lc.textContent)!==n){{
+    lc.textContent=n;
+    g.textContent=buildGutter(n);
+  }}
+  g.scrollTop=ed.scrollTop;
+}}
+
+// Initialise gutter immediately (same frame — no polling needed)
+g.textContent=buildGutter({_n_lines});
+
+ed.addEventListener('scroll', function(){{ g.scrollTop=ed.scrollTop; }}, {{passive:true}});
+ed.addEventListener('input',  syncGutter);
+
+// Go to line
+function goToLine(){{
+  var n=parseInt(document.getElementById('gtl').value);
+  if(!isFinite(n)||n<1) return;
+  var lines=ed.value.split('\\n');
+  if(n>lines.length) n=lines.length;
+  var lh=parseFloat(getComputedStyle(ed).lineHeight)||20;
+  // Centre the target line in the visible area
+  var visLines=Math.floor(ed.clientHeight/lh);
+  ed.scrollTop=Math.max(0,(n-1-Math.floor(visLines/2))*lh);
+  g.scrollTop=ed.scrollTop;
+  // Select the entire target line
+  var pos=0;
+  for(var i=0;i<n-1;i++) pos+=lines[i].length+1;
+  ed.focus();
+  ed.setSelectionRange(pos, pos+(lines[n-1]||'').length);
+}}
+
+document.getElementById('gob').addEventListener('click', goToLine);
+document.getElementById('gtl').addEventListener('keydown', function(e){{
+  if(e.key==='Enter') goToLine();
+}});
+
+// Apply Changes → update the backing Streamlit textarea via postMessage bridge
+document.getElementById('applyb').addEventListener('click', function(){{
+  window.parent.postMessage({{type:'sgml_editor_update', value:ed.value}}, '*');
+  msg.textContent='✓ Applied — now Save or Download';
+  setTimeout(function(){{ msg.textContent=''; }}, 5000);
+}});
+</script></body></html>"""
+
+        _st_components.html(_editor_html, height=468, scrolling=False)
+
+        # Hide the backing textarea — it's only a JS bridge target, not for users
         st.markdown(
-            "**Edit SGML** <small style='color:#888;font-size:0.8em'>"
-            "(line numbers shown above for reference)</small>",
+            "<style>[data-testid='stTextAreaRootElement']"
+            ":has(textarea[aria-label='sgml_editor_backing'])"
+            "{display:none!important}</style>",
             unsafe_allow_html=True,
         )
 
-        # ── Line-numbered editor ──────────────────────────────────────────────
-        _sgml_lines = current_sgml.splitlines()
-        _n_lines = len(_sgml_lines)
-        _ln_html = "".join(
-            f'<div style="height:21px;line-height:21px;color:#94a3b8;'
-            f'font-size:12px;text-align:right;padding-right:3px">{i}</div>'
-            for i in range(1, _n_lines + 1)
+        # ── Backing textarea (hidden — aria-label used by the JS bridge) ──────
+        edited = st.text_area(
+            label="sgml_editor_backing",
+            value=current_sgml,
+            height=1,
+            key="sgml_editor",
+            label_visibility="collapsed",
         )
-        _ln_col, _ta_col = st.columns([1, 16])
-        with _ln_col:
-            st.markdown(
-                f'<div style="font-family:\'Courier New\',monospace;'
-                f'height:420px;overflow:hidden;background:#f8fafc;'
-                f'border:1px solid #d1d5db;border-right:none;'
-                f'border-radius:4px 0 0 4px;padding:6px 3px 0 3px;'
-                f'user-select:none">{_ln_html}</div>',
-                unsafe_allow_html=True,
-            )
-        with _ta_col:
-            edited = st.text_area(
-                label="Edit SGML",
-                value=current_sgml,
-                height=420,
-                key="sgml_editor",
-                label_visibility="collapsed",
-            )
         if edited != current_sgml:
             st.session_state["sgml_content"] = edited
             current_sgml = edited
@@ -600,6 +885,7 @@ def _render_report(
                     refreshed = validate(
                         sgml_path,
                         pdf_path if pdf_path and pdf_path.exists() else None,
+                        docx_path=str(docx_path) if docx_path and docx_path.exists() else None,
                     )
                     st.session_state["validation_report"] = refreshed
                     st.info("🔄 Validation refreshed after save.")
@@ -760,37 +1046,40 @@ def main() -> None:
     tab_review, tab_history = st.tabs(["🔍 Review", "📋 History"])
 
     with tab_review:
-        sgml_path, pdf_path = _sidebar()
+        sgml_path, pdf_path, docx_path = _sidebar()
 
         if sgml_path is None:
-            st.info(
-                "Upload an SGML file and its source PDF using the sidebar, "
-                "or enter disk paths directly."
-            )
             st.markdown(
                 """
-                **What this tool does:**
-                - Runs all 4 validation levels (L1–L4) on the vendor SGML
-                - Shows **highlighted SGML** — problem lines coloured red/orange/yellow
-                - Shows **Actionable Fixes** — exact line numbers, before/after diffs
-                - Lets you **auto-apply D6 encoding fixes** with one click
-                - Lets you edit the SGML inline and save to disk
-                - Records your human accept/reject decision to `hitl_decisions.jsonl`
+                ### 👋 Welcome to TR SGML Validator
 
-                **Colour key for highlighted SGML:**
-                - 🔴 Red background = critical issue on this line
-                - 🟠 Orange background = major issue on this line
-                - 🟡 Yellow background = minor issue on this line
+                **To begin, upload your files using the sidebar on the left:**
+
+                | Step | Action |
+                |------|--------|
+                | **①** | Upload the `.sgm` file you received from the TR business team |
+                | **②** | Upload the original source `.pdf` document |
+
+                Once both files are uploaded, validation runs automatically and you will see:
+                - **Score breakdown** — L1 Content / L2 Structural / L3 Corpus / L4 Source
+                - **Highlighted SGML** — problem lines coloured 🔴 red / 🟠 orange / 🟡 yellow
+                - **Actionable Fixes** — exact line numbers with before/after diffs
+                - **Auto-fix button** — apply all safe encoding fixes with one click
+                - **Inline SGML editor** — edit and download the corrected file
+                - **HITL decision panel** — record ACCEPT / REJECT with reviewer notes
+
+                > 💡 **Tip:** You only need the SGML file to start. Upload the PDF for full
+                > L1 content and L4 source comparison checks.
                 """
             )
             return
 
         if pdf_path is None:
-            st.warning(
-                "📌 SGML auto-loaded from last pipeline run. "
-                "Upload the source PDF in the sidebar to begin full HITL validation."
+            st.info(
+                "📌 SGML loaded. Upload the source PDF (sidebar ②) to enable "
+                "L1 content and L4 source comparison checks."
             )
-            return
+            # Still allow L2/L3-only validation without PDF
 
         # Reset SGML content in session when a new file is loaded
         run_key = f"{sgml_path}|{pdf_path}"
@@ -800,7 +1089,11 @@ def main() -> None:
 
         if st.session_state.get("_last_run") != run_key or st.button("🔄 Re-validate"):
             with st.spinner("Running validator (L1 → L2 → L3 → L4)…"):
-                report = validate(str(sgml_path), str(pdf_path))
+                report = validate(
+                    str(sgml_path),
+                    str(pdf_path) if pdf_path else None,
+                    docx_path=str(docx_path) if docx_path and docx_path.exists() else None,
+                )
             st.session_state["_report"] = report
             st.session_state["_last_run"] = run_key
 

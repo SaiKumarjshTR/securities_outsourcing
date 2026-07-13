@@ -1,13 +1,16 @@
 # batch_runner_deploy.py - Linux/Docker safe deployment build.
 # Generated from batch_runner_standalone.py by sync_to_deploy.py.
 # All Windows-specific paths replaced with env-var driven config.
-# PDF->DOCX via FRS14 HTTP bridge (frs14_bridge.py) -- no win32com needed.
+# PDF->DOCX via AbbyyLinuxConverter (ABBYY FREngine 12 on Ubuntu/Plexus).
+#   Replaces FRS14 HTTP bridge -- no Windows machine or network bridge needed.
 # Notebook-only cells (CELL 16+) stripped - not needed in production.
 #
 import os
 import re
 import json
 import time
+import shutil
+import subprocess
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -16,8 +19,9 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from collections import defaultdict
 
-# win32com removed — PDF→DOCX now handled by the FRS14 HTTP bridge (frs14_bridge.py).
-# The bridge runs on the Windows FRS14 machine; this client works on any OS.
+# FRS14 HTTP bridge removed — PDF→DOCX now handled by AbbyyLinuxConverter.
+# Uses ABBYY FREngine 12 installed locally on Ubuntu/Plexus at /opt/ABBYY/FREngine12.
+# No Windows machine or network bridge required.
 
 # DOCX
 from docx import Document
@@ -45,11 +49,12 @@ print(f"\U0001f4c5 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 # are used only when running the script directly (e.g. local testing).
 # ---------------------------------------------------------------------------
 
-# FRS14 HTTP bridge — PDF→DOCX via ABBYY FineReader Server 14 over the network.
-# Set FRS14_SERVER_URL to the Windows host running frs14_bridge.py.
-FRS14_CONFIG = {
-    'server_url': os.getenv('FRS14_SERVER_URL', 'http://localhost:7090'),
-    'timeout':    int(os.getenv('FRS14_TIMEOUT', '300')),
+# ABBYY FREngine 12 — Ubuntu/Linux local installation.
+# Replaces the Windows FRS14 HTTP bridge. No network dependency.
+ABBYY_LINUX_CONFIG = {
+    'cli':     os.getenv('ABBYY_CLI', '/opt/ABBYY/FREngine12/Samples/CommandLineInterface/CommandLineInterface'),
+    'lib':     os.getenv('ABBYY_LIB', '/opt/ABBYY/FREngine12/Bin'),
+    'timeout': int(os.getenv('ABBYY_TIMEOUT', '600')),
 }
 
 # Thomson Reuters AI Platform
@@ -576,68 +581,93 @@ class ImageData:
 
 print('Ã¢Å“â€¦ Data structures defined (with skip and docx_formatting fields)')
 
-class FRS14Converter:
+class AbbyyLinuxConverter:
     """
-    ABBYY FineReader Server 14 -- HTTP bridge client.
+    ABBYY FREngine 12 — Ubuntu/Linux local CLI converter.
 
-    Replaces the Windows-only ABBYYConverter (FineReader Engine 12 Desktop SDK).
-    Calls a lightweight HTTP bridge (frs14_bridge.py) running on the Windows FRS14
-    machine. Fully cross-platform -- works unchanged on Ubuntu/Plexus.
+    Drop-in replacement for the Windows FRS14Converter HTTP bridge.
+    Calls /opt/ABBYY/FREngine12 directly on the Ubuntu/Plexus host.
+    No network dependency — fully self-contained.
 
-    Configure via FRS14_CONFIG dict or environment variables:
-      FRS14_SERVER_URL  -- base URL of the bridge, e.g. http://192.168.1.10:7090
-      FRS14_TIMEOUT     -- per-request timeout in seconds (default 300)
+    Configure via ABBYY_LINUX_CONFIG dict or environment variables:
+      ABBYY_CLI     -- path to CommandLineInterface binary
+      ABBYY_LIB     -- path to FREngine Bin directory (LD_LIBRARY_PATH)
+      ABBYY_TIMEOUT -- per-file timeout in seconds (default 600)
     """
 
-    def __init__(self, server_url: str = None, timeout: int = 300):
-        self.server_url = (server_url or os.getenv('FRS14_SERVER_URL', 'http://localhost:7090')).rstrip('/')
-        self.timeout = timeout or int(os.getenv('FRS14_TIMEOUT', '300'))
+    def __init__(self, cli: str = None, lib: str = None, timeout: int = 600):
+        self.cli     = cli     or os.getenv('ABBYY_CLI', '/opt/ABBYY/FREngine12/Samples/CommandLineInterface/CommandLineInterface')
+        self.lib     = lib     or os.getenv('ABBYY_LIB', '/opt/ABBYY/FREngine12/Bin')
+        self.timeout = timeout or int(os.getenv('ABBYY_TIMEOUT', '600'))
+        self._env    = {**os.environ, 'LD_LIBRARY_PATH': self.lib}
 
     def initialize(self):
-        print("\n[FRS14] Connecting to bridge...")
-        try:
-            r = requests.get(f'{self.server_url}/health', timeout=10)
-            r.raise_for_status()
-            info = r.json()
-            print(f"   OK -- FRS14 bridge ready: {self.server_url}  (frs14={info.get('frs14', 'ok')})")
-        except Exception as e:
-            raise RuntimeError(f"FRS14 bridge not reachable at {self.server_url}: {e}")
+        print('\n[ABBYY-Linux] Checking FREngine 12...')
+        if not os.path.isfile(self.cli):
+            raise RuntimeError(f'ABBYY CLI not found: {self.cli}')
+        if not os.path.isdir(self.lib):
+            raise RuntimeError(f'ABBYY Bin dir not found: {self.lib}')
+        r = subprocess.run([self.cli, '--help'], env=self._env,
+                           capture_output=True, timeout=15)
+        if r.returncode not in (0, 1):
+            raise RuntimeError(f'ABBYY CLI smoke-test failed (rc={r.returncode})')
+        lsvc = subprocess.run(['pgrep', '-f', 'LicensingService'], capture_output=True)
+        if lsvc.returncode != 0:
+            raise RuntimeError('ABBYY LicensingService is not running')
+        print(f'   OK -- ABBYY FREngine 12 ready  ({self.cli})')
 
-    def _convert(self, pdf_path: str, out_path: str, output_format: str) -> bool:
-        """POST pdf_path to /convert, save response bytes to out_path."""
+    def _run_cli(self, pdf_path: str, out_path: str, fmt: str) -> bool:
+        """Run ABBYY CLI. Writes to Linux /tmp first if out_path is on /mnt/."""
+        use_tmp = str(out_path).startswith('/mnt/')
+        tmp_out = f'/tmp/abbyy_out_{os.getpid()}.{fmt.lower()}' if use_tmp else out_path
+        cmd = [
+            self.cli,
+            '-if',  pdf_path,
+            '-rl',  'English',
+            '-pam', 'DocumentConversion',
+            '-f',   fmt,
+            '-of',  tmp_out,
+        ]
         try:
-            with open(pdf_path, 'rb') as fh:
-                r = requests.post(
-                    f'{self.server_url}/convert',
-                    files={'file': (Path(pdf_path).name, fh, 'application/pdf')},
-                    data={'output_format': output_format},
-                    timeout=self.timeout,
-                )
-            if r.status_code != 200:
-                print(f"   [FRS14] Error {r.status_code}: {r.text[:200]}")
+            r = subprocess.run(cmd, env=self._env, capture_output=True,
+                               text=True, timeout=self.timeout)
+            if r.returncode != 0:
+                print(f'   [ABBYY] CLI error (rc={r.returncode}): {r.stderr[-300:]}')
                 return False
-            Path(out_path).write_bytes(r.content)
-            size = os.path.getsize(out_path) / 1024
-            print(f"   OK -- {output_format}: {size:.1f} KB")
+            if not os.path.exists(tmp_out) or os.path.getsize(tmp_out) == 0:
+                print(f'   [ABBYY] Output missing/empty: {tmp_out}')
+                return False
+            if use_tmp:
+                os.makedirs(Path(out_path).parent, exist_ok=True)
+                shutil.copy2(tmp_out, out_path)
+                os.unlink(tmp_out)
+            size_kb = os.path.getsize(out_path) / 1024
+            print(f'   OK -- {fmt}: {size_kb:.1f} KB')
             return True
+        except subprocess.TimeoutExpired:
+            print(f'   [ABBYY] Timeout ({self.timeout}s) on {Path(pdf_path).name}')
+            return False
         except Exception as e:
-            print(f"   [FRS14] Error: {e}")
+            print(f'   [ABBYY] Exception: {e}')
             return False
 
     def convert_pdf_to_docx(self, pdf_path: str, docx_path: str) -> bool:
-        print(f"\n[FRS14] Converting PDF to DOCX...")
-        print(f"   Input: {Path(pdf_path).name}")
-        return self._convert(pdf_path, docx_path, 'DOCX')
+        print(f'\n[ABBYY-Linux] Converting PDF → DOCX...')
+        print(f'   Input: {Path(pdf_path).name}')
+        return self._run_cli(pdf_path, docx_path, 'DOCX')
 
     def convert_pdf_to_html(self, pdf_path: str, html_path: str) -> bool:
-        """Export HTML preserving <sup> footnote markers (secondary pass)."""
-        print(f"   [FRS14] Exporting HTML for footnote-anchor detection...")
-        return self._convert(pdf_path, html_path, 'HTML')
+        """HTML export for footnote-anchor detection."""
+        print(f'   [ABBYY-Linux] Exporting HTML for footnote detection...')
+        return self._run_cli(pdf_path, html_path, 'HTMLUnicodeDefaults')
 
     def cleanup(self):
-        pass  # No COM resources to release
+        pass  # No resources to release
 
-print('FRS14Converter defined')
+# Keep alias so any code referencing FRS14Converter still works
+FRS14Converter = AbbyyLinuxConverter
+
+print('AbbyyLinuxConverter defined (FRS14Converter alias active)')
 class ImageExtractor:
     """Extract images from DOCX and save as BMP"""
     
@@ -10457,16 +10487,17 @@ class CompletePipeline:
         print("🚀 INITIALIZING PIPELINE v7.0  (Agentic Multi-LLM)")
         print("="*80)
 
-        # ABBYY
+        # ABBYY FREngine 12 (Ubuntu/Linux local)
         try:
-            self.abbyy = FRS14Converter(
-                server_url=FRS14_CONFIG['server_url'],
-                timeout=FRS14_CONFIG['timeout'],
+            self.abbyy = AbbyyLinuxConverter(
+                cli=ABBYY_LINUX_CONFIG['cli'],
+                lib=ABBYY_LINUX_CONFIG['lib'],
+                timeout=ABBYY_LINUX_CONFIG['timeout'],
             )
             self.abbyy.initialize()
-            print("✅ FRS14 bridge ready")
+            print("✅ ABBYY FREngine 12 (Linux) ready")
         except Exception as e:
-            print(f"⚠️  FRS14 bridge unavailable: {e}")
+            print(f"⚠️  ABBYY FREngine 12 unavailable: {e}")
             self.abbyy = None
 
         # RAG

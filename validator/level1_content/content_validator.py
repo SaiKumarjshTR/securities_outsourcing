@@ -417,6 +417,17 @@ def validate_content(
                 "examples": missing_hdgs[:3],
             })
 
+    # Floor: if text content is fully confirmed present (text_score ≥ 18),
+    # section headings cannot truly be missing — only the heading extractor
+    # failed (e.g. bilingual TSX PDFs where two-column layout causes PyMuPDF
+    # to extract non-matching header text instead of actual section titles).
+    # Grant partial credit so perfect-text docs are not penalised for an
+    # extraction artefact.
+    if text_score >= 20.0:
+        section_score = max(section_score, 4.0)
+    elif text_score >= 18.0:
+        section_score = max(section_score, 2.0)
+
     result.section_score = section_score
 
     # ── 3. TABLE COMPLETENESS (4 pts) ─────────────────────────────────────────
@@ -433,12 +444,21 @@ def validate_content(
                 "May be formatted as text/list in SGML."
             )
         else:
+            # PDF has 3+ tables and SGML has none: this is a critical failure.
+            # Tables are core structured content — their complete absence means
+            # the pipeline failed to capture essential document structure.
+            # This guarantees a REJECT outcome (score driven to 0 for this level).
             table_score = 0.0
+            result.critical_failure = True
+            result.critical_reason = (
+                f"Tables completely absent: PDF has {pdf.table_count} table(s) "
+                f"but SGML has no <SGMLTBL> tags. Pipeline table-preservation failed."
+            )
             result.issues.append({
                 "level": "L1",
                 "category": "table_completeness",
-                "severity": "major",
-                "description": f"PDF has {pdf.table_count} tables but SGML has no <SGMLTBL> tags.",
+                "severity": "critical",
+                "description": result.critical_reason,
             })
     else:
         tbl_ratio = min(sgml.table_count, pdf.table_count) / pdf.table_count

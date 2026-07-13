@@ -115,6 +115,65 @@ def detect_heading_level(size: float, body_size: float) -> int:
     return 0
 
 
+def detect_heading_level_block(
+    size: float,
+    body_size: float,
+    is_bold_block: bool,
+    text: str,
+) -> int:
+    """
+    Heading detection for a full text block (paragraph level).
+
+    Extends the span-level size heuristic with a bold+short heuristic:
+    regulatory PDFs use bold same-size headings (ALL-CAPS or Title-Case)
+    that have zero size delta and are missed by detect_heading_level alone.
+
+    Rules (applied in order — first match wins):
+      Size-based (from detect_heading_level):
+        H1 / H2 / H3 / H4 as before.
+      Bold + short (same-size headings common in CSA/OSC/BC docs):
+        ALL-CAPS bold, ≤ 15 words, no sentence-end punctuation → H2
+        Title-Case bold, ≤ 10 words, no sentence-end punctuation → H3
+        Any bold, ≤ 6 words,  no sentence-end punctuation → H4
+    """
+    # Size-based takes priority if it fires
+    size_level = detect_heading_level(size, body_size)
+    if size_level > 0:
+        return size_level
+
+    if not is_bold_block:
+        return 0
+
+    stripped = text.strip()
+    if not stripped:
+        return 0
+
+    # Reject likely body sentences: end with . ! ? or are very long
+    if stripped[-1] in ".!?" and len(stripped.split()) > 6:
+        return 0
+
+    words = stripped.split()
+    wc = len(words)
+    has_lower = any(c.islower() for c in stripped)
+    is_all_caps = (not has_lower and stripped.isupper()) if stripped.replace(" ", "").isalpha() else False
+
+    # ALL-CAPS bold → H2
+    if is_all_caps and wc <= 15:
+        return 2
+
+    # Title-Case bold (first letter of most words capitalised) → H3
+    cap_words = sum(1 for w in words if w and w[0].isupper())
+    is_title_case = has_lower and (cap_words / max(wc, 1)) >= 0.6
+    if is_title_case and wc <= 10:
+        return 3
+
+    # Short bold phrase → H4 (require at least one real word ≥ 3 alphanumeric chars)
+    if wc <= 6 and any(len(re.sub(r'[^a-zA-Z0-9]', '', w)) >= 3 for w in words):
+        return 4
+
+    return 0
+
+
 def classify_span(span: Dict, body_size: float) -> Dict:
     """
     Enrich a raw PyMuPDF span dict with computed formatting flags.

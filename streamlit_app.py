@@ -3,7 +3,7 @@ Securities Commission Conversion — Streamlit UI
 =============================================
 AI-powered PDF/DOCX → SGML conversion for TR Securities Outsourcing.
 
-Pipeline: PDF → (FRS14 HTTP bridge) → DOCX → batch_runner_deploy.py → _TR.sgm
+# Pipeline: PDF → (ABBYY FREngine 12 Ubuntu) → DOCX → batch_runner_deploy.py → _TR.sgm
 
 Plexus deployment: port 8501
 Health check: GET /_stcore/health  (Streamlit built-in)
@@ -167,8 +167,10 @@ if "last_docx_bytes" not in st.session_state:
 if "last_docx_name" not in st.session_state:
     st.session_state.last_docx_name = None
 
-# FRS14 bridge URL (read-only; set via FRS14_SERVER_URL env var)
-_FRS14_SERVER_URL = os.getenv('FRS14_SERVER_URL', 'http://localhost:7090')
+# ABBYY FREngine 12 (Ubuntu) — direct subprocess config
+_ABBYY_CLI = os.getenv('ABBYY_CLI', '/opt/ABBYY/FREngine12/Samples/CommandLineInterface/CommandLineInterface')
+_ABBYY_LIB = os.getenv('ABBYY_LIB', '/opt/ABBYY/FREngine12/Bin')
+_ABBYY_TIMEOUT = int(os.getenv('ABBYY_TIMEOUT', '600'))
 
 # ── Process-global browser session registry (real active-session count) ───────
 # Each Streamlit browser tab gets its own st.session_state but shares the
@@ -224,7 +226,7 @@ def _log(level: str, msg: str) -> None:
 
 STEP_DEFS = [
     # (label, icon, phase)   phase: 1=Conversion, 2=Validation
-    ("FRS14 PDF → DOCX",           "📄", 1),
+    ("ABBYY PDF → DOCX",           "📄", 1),
     ("DOCX → SGML (AI Pipeline)", "🤖", 1),
     ("L1 Source Fidelity",        "🔎", 2),
     ("L2 Structural Compliance",  "🏗️", 2),
@@ -346,19 +348,38 @@ with st.sidebar:
 
     st.markdown("---")
 
-    with st.expander("� FRS14 Bridge Config", expanded=False):
-        st.caption("PDF → DOCX conversion runs via the FRS14 HTTP bridge.")
-        st.code(_FRS14_SERVER_URL, language=None)
-        st.caption("Set the `FRS14_SERVER_URL` environment variable to change the bridge address.")
-        try:
-            import requests as _req
-            _r = _req.get(f'{_FRS14_SERVER_URL}/health', timeout=4)
-            if _r.status_code == 200:
-                st.success("✅ FRS14 bridge reachable")
-            else:
-                st.warning(f"⚠️ Bridge returned HTTP {_r.status_code}")
-        except Exception as _e:
-            st.warning(f"⚠️ Bridge not reachable: {_e}")
+    with st.expander("📄 ABBYY FREngine 12", expanded=False):
+        st.caption("PDF → DOCX conversion via ABBYY FREngine 12 (Ubuntu/Linux).")
+        st.code(_ABBYY_CLI, language=None)
+        st.caption("Set `ABBYY_CLI` / `ABBYY_LIB` env vars to override paths.")
+        import subprocess as _sp
+        import socket as _sock
+        _cli_ok = os.path.isfile(_ABBYY_CLI)
+        _ls_host = os.environ.get("ABBYY_LS_HOST", "")
+        if _ls_host:
+            # External LicensingService mode — check TCP connectivity
+            try:
+                _s = _sock.create_connection((_ls_host, 3023), timeout=3)
+                _s.close()
+                _svc_ok = True
+                _svc_label = f"external LS at {_ls_host}:3023"
+            except OSError:
+                _svc_ok = False
+                _svc_label = f"external LS at {_ls_host}:3023 (unreachable)"
+        else:
+            # Local LicensingService mode
+            _svc_label = "local LicensingService"
+            try:
+                _svc_ok = _sp.run(['pgrep', '-f', 'LicensingService'],
+                                   capture_output=True).returncode == 0
+            except FileNotFoundError:
+                _svc_ok = False
+        if _cli_ok and _svc_ok:
+            st.success(f"✅ ABBYY ready ({_svc_label})")
+        elif _cli_ok and not _svc_ok:
+            st.warning(f"⚠️ {_svc_label} not running — conversions will fail")
+        else:
+            st.info("ℹ️ ABBYY CLI not on this host — conversions run on the pipeline host")
 
     st.markdown("---")
 
@@ -413,35 +434,39 @@ def _run_sgml_pipeline(docx_bytes: bytes, doc_name: str) -> dict:
 
 
 def _pdf_to_docx(pdf_path: str, docx_path: str) -> bool:
-    """
-    Convert PDF to DOCX via the FRS14 HTTP bridge (cross-platform, no COM needed).
-    Returns True on success, False on any failure (caller will abort the pipeline).
-    """
-    import requests as _req
-    server_url = _FRS14_SERVER_URL.rstrip('/')
+    """Convert PDF to DOCX using bundled ABBYY FREngine 12 CLI directly."""
+    import subprocess as _sp
+    cli  = os.getenv('ABBYY_CLI', '/opt/ABBYY/FREngine12/Samples/CommandLineInterface/CommandLineInterface')
+    lib  = os.getenv('ABBYY_LIB', '/opt/ABBYY/FREngine12/Bin')
+    _log('INFO', f'PDF→DOCX via ABBYY CLI: {cli}')
+
+    if not os.path.isfile(cli):
+        _log('ERROR', f'ABBYY CLI not found: {cli}')
+        st.error(f"❌ ABBYY CLI not found at {cli}")
+        return False
+
+    env = {**os.environ, 'LD_LIBRARY_PATH': f"{lib}:{os.environ.get('LD_LIBRARY_PATH', '')}"}
+    cmd = [cli, '-if', pdf_path, '-rl', 'English', '-pam', 'DocumentConversion', '-f', 'DOCX', '-of', docx_path]
     try:
-        with open(pdf_path, 'rb') as fh:
-            r = _req.post(
-                f'{server_url}/convert',
-                files={'file': (Path(pdf_path).name, fh, 'application/pdf')},
-                data={'output_format': 'DOCX'},
-                timeout=700,   # must exceed bridge POLL_TIMEOUT (600s) + margin
-            )
-        if r.status_code != 200:
-            _log('ERROR', f'FRS14 bridge error {r.status_code}: {r.text[:200]}')
-            st.error(f"❌ FRS14 bridge returned HTTP {r.status_code}: {r.text[:200]}")
+        r = _sp.run(cmd, env=env, capture_output=True, text=True, timeout=_ABBYY_TIMEOUT)
+        if r.returncode != 0:
+            _log('ERROR', f'ABBYY CLI failed (rc={r.returncode}): {r.stderr[-300:]}')
+            st.error(f"❌ ABBYY conversion failed (rc={r.returncode}): {r.stderr[-300:]}")
             return False
-        Path(docx_path).write_bytes(r.content)
+        if not os.path.exists(docx_path) or os.path.getsize(docx_path) == 0:
+            _log('ERROR', 'ABBYY produced empty output')
+            st.error("❌ ABBYY conversion produced empty output")
+            return False
         size_kb = os.path.getsize(docx_path) / 1024
-        _log('INFO', f'PDF→DOCX via FRS14 bridge ({size_kb:.1f} KB)')
+        _log('INFO', f'PDF→DOCX complete ({size_kb:.1f} KB)')
         return True
-    except _req.exceptions.ConnectionError:
-        _log('ERROR', f'FRS14 bridge not reachable at {server_url}')
-        st.error(f"❌ FRS14 bridge not reachable at {server_url}. Ensure frs14_bridge.py is running on the Windows FRS14 machine.")
+    except _sp.TimeoutExpired:
+        _log('ERROR', f'ABBYY CLI timed out ({_ABBYY_TIMEOUT}s)')
+        st.error(f"❌ ABBYY conversion timed out ({_ABBYY_TIMEOUT}s)")
         return False
     except Exception as exc:
-        _log('ERROR', f'FRS14 PDF→DOCX failed: {exc}')
-        st.error(f"❌ FRS14 conversion failed: {exc}")
+        _log('ERROR', f'ABBYY CLI error: {exc}')
+        st.error(f"❌ ABBYY conversion error: {exc}")
         return False
 
 
@@ -457,7 +482,7 @@ st.markdown("#### 📁 Upload PDF File")
 
 uploaded_pdf = st.file_uploader(
     "Choose a PDF file to process",
-    type=["pdf", "docx"],          # accept DOCX too (no FRS14 bridge needed for DOCX)
+    type=["pdf", "docx"],          # accept DOCX too (no ABBYY step needed for DOCX)
     key="pdf_uploader",
 )
 
@@ -501,7 +526,7 @@ else:
         img_tmp      = tempfile.mkdtemp(prefix="imgext_")
 
         try:
-            # ── Reuse DOCX from pipeline run if available (avoids re-running FRS14) ──
+            # ── Reuse DOCX from pipeline run if available (avoids re-running ABBYY) ──
             _cached_docx  = st.session_state.get("last_docx_bytes")
             _cached_name  = st.session_state.get("last_docx_name", "")
             _same_doc     = _cached_docx and Path(_cached_name).stem == doc_name
@@ -510,9 +535,9 @@ else:
                 # Already have the DOCX from the pipeline run — reuse it
                 docx_bytes = _cached_docx
                 progress_img.progress(20, text="Using cached DOCX from pipeline run…")
-                status_img.info("📌 Reusing DOCX from pipeline run — skipping FRS14 conversion.")
+                status_img.info("📌 Reusing DOCX from pipeline run — skipping ABBYY conversion.")
             elif is_pdf:
-                # No cached DOCX — convert via FRS14 bridge
+                # No cached DOCX — convert via ABBYY
                 status_img.info("⏳ Converting PDF → DOCX to access images (run 'Process Document' first to skip this step)…")
                 progress_img.progress(10, text="Converting PDF → DOCX…")
                 pdf_tmp  = os.path.join(img_tmp, uploaded_pdf.name)
@@ -636,12 +661,12 @@ else:
             raw_bytes = uploaded_pdf.getvalue()
 
             if is_pdf:
-                # ── Step 0: FRS14 PDF → DOCX ─────────────────────
+                # ── Step 0: ABBYY PDF → DOCX ─────────────────
                 st.session_state.pipeline_steps[0] = 'running'
-                _log('STEP', 'Step 1/6 — FRS14 PDF → DOCX conversion starting…')
+                _log('STEP', 'Step 1/6 — ABBYY PDF → DOCX conversion starting…')
                 _refresh()
-                progress_bar.progress(10, text="Step 1/6 — FRS14 PDF → DOCX…")
-                status_box.info("⏳  FRS14 bridge converting PDF to DOCX…")
+                progress_bar.progress(10, text="Step 1/6 — ABBYY PDF → DOCX…")
+                status_box.info("⏳  ABBYY FREngine 12 converting PDF to DOCX…")
 
                 pdf_path  = os.path.join(tmp_dir, uploaded_pdf.name)
                 docx_path = os.path.join(tmp_dir, f"{doc_name}.docx")
@@ -651,7 +676,7 @@ else:
                 ok = _pdf_to_docx(pdf_path, docx_path)
                 if not ok:
                     st.session_state.pipeline_steps[0] = 'error'
-                    _log('ERROR', 'FRS14 PDF→DOCX conversion failed — aborting.')
+                    _log('ERROR', 'ABBYY PDF\u2192DOCX conversion failed \u2014 aborting.')
                     _refresh()
                     st.session_state.processing_count  = max(0, st.session_state.processing_count - 1)
                     st.session_state.pipeline_running   = False
@@ -659,12 +684,12 @@ else:
                     st.stop()
 
                 st.session_state.pipeline_steps[0] = 'done'
-                _log('INFO', f'FRS14 conversion complete → {Path(docx_path).name}')
+                _log('INFO', f'ABBYY conversion complete \u2192 {Path(docx_path).name}')
                 _refresh()
 
                 with open(docx_path, "rb") as fh:
                     docx_bytes = fh.read()
-                # Cache DOCX so Extract Images can reuse without re-calling FRS14
+                # Cache DOCX so Extract Images can reuse without re-running ABBYY
                 st.session_state.last_docx_bytes = docx_bytes
                 st.session_state.last_docx_name  = f"{doc_name}.docx"
                 progress_bar.progress(25, text="Step 2/6 — SGML pipeline…")
@@ -673,7 +698,7 @@ else:
                 st.session_state.last_docx_bytes = raw_bytes
                 st.session_state.last_docx_name  = uploaded_pdf.name
                 st.session_state.pipeline_steps[0] = 'done'  # N/A for DOCX input
-                _log('INFO', 'DOCX uploaded directly — skipping FRS14 step.')
+                _log('INFO', 'DOCX uploaded directly \u2014 skipping ABBYY step.')
                 progress_bar.progress(15, text="Step 2/6 — SGML pipeline…")
 
             # ── Step 1: DOCX → SGML (AI pipeline) ────────────────────────────
@@ -717,7 +742,7 @@ else:
                     _sgm_f.write(sgml_text)
                     _sgm_tmp = Path(_sgm_f.name)
 
-                # Pass pdf_path + docx_path when available (PDF→FRS14→SGML flow)
+                # Pass pdf_path + docx_path when available (PDF→ABBYY→SGML flow)
                 _val_pdf_path  = pdf_path  if is_pdf and os.path.isfile(pdf_path)  else None
                 _val_docx_path = docx_path if is_pdf and os.path.isfile(docx_path) else None
                 _vm_report = _vm_validate(

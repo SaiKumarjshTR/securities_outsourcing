@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dockerfile.licensing — ABBYY LicensingService standalone container
+#
+# Implements ABBYY's official "Two-Container" pattern:
+#   https://docs.abbyy.com/fine-reader/engine/distribution/distribution-linux/
+#   running-abbyy-finereader-engine-12-inside-a-docker-container-2
+#
+# This container ONLY runs the LicensingService daemon (port 3023).
+# It is deployed as a SEPARATE Plexus service with outbound internet access
+# (account.abbyy.com:443). The main app container connects to it via
+#   ABBYY_LS_HOST=<this-service-cluster-ip>
+#
+# Architecture:
+#   [App Container] --TCP:3023--> [This LS Container] --HTTPS:443--> account.abbyy.com
+#
+# Plexus deployment:
+#   1. Build & push this image (bash scripts/build_push_licensing_v001.sh)
+#   2. Deploy as a SEPARATE Plexus service named "sgml-abbyy-ls"
+#   3. Plexus network policy must allow port 443 outbound from this service ONLY
+#      (much easier to approve than opening the whole app pod)
+#   4. In the main app deployment set: ABBYY_LS_HOST=sgml-abbyy-ls
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM ubuntu:noble
+
+LABEL maintainer="Thomson Reuters — Securities SGML Team"
+LABEL version="1.0.0"
+LABEL description="ABBYY FREngine12 LicensingService — standalone sidecar container"
+
+# Minimal runtime deps for the LicensingService binary
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    apt-get install --no-install-recommends -y \
+        ca-certificates \
+        bash \
+        libc6 \
+        libgcc-s1 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── TR / Zscaler CA certificates ─────────────────────────────────────────────
+# Required so LicensingService can verify SSL to account.abbyy.com when the
+# connection travels through TR's Zscaler proxy.
+COPY abbyy_bundle/tr_certs/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
+# ── LicensingService binary + shared libraries ───────────────────────────────
+RUN mkdir -p /usr/local/bin/ABBYY/SDK/12/Licensing \
+    && mkdir -p /usr/local/lib/ABBYY/SDK/12/Licensing \
+    && mkdir -p /var/lib/ABBYY/SDK/12/Licenses
+
+COPY abbyy_bundle/LicensingService /usr/local/bin/ABBYY/SDK/12/Licensing/LicensingService
+COPY abbyy_bundle/usr_local_lib_abbyy/ /usr/local/lib/ABBYY/
+RUN chmod +x /usr/local/bin/ABBYY/SDK/12/Licensing/LicensingService
+
+# ── License activation tokens (Online Protection license) ────────────────────
+# The .ActivationToken file + Protection.ccf are required by LicensingService
+# to authenticate with account.abbyy.com.
+COPY abbyy_bundle/var_lib_abbyy/ABBYY/ /var/lib/ABBYY/
+RUN chmod -R 777 /var/lib/ABBYY/
+
+# ── Runtime environment ───────────────────────────────────────────────────────
+ENV LD_LIBRARY_PATH=/usr/local/lib/ABBYY/SDK/12/Licensing
+
+# ── Health check — verify port 3023 is listening ─────────────────────────────
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD bash -c "cat < /dev/null > /dev/tcp/127.0.0.1/3023" || exit 1
+
+# ── Expose LicensingService port ──────────────────────────────────────────────
+EXPOSE 3023
+
+# ── Run LicensingService in foreground (becomes PID 1, logs to stdout) ───────
+# /standalone keeps the service in the foreground — correct for Docker.
+ENTRYPOINT ["/usr/local/bin/ABBYY/SDK/12/Licensing/LicensingService", "/standalone"]

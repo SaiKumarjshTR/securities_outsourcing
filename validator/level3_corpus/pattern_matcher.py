@@ -191,25 +191,39 @@ def _check_statistics(raw: str, corpus: dict, result: L3Result) -> None:
         result.corpus_word_mean = mean
         result.corpus_word_std = std
 
-        if abs(z) > 4.0:
+        if z < -4.0:
+            # Document is far BELOW baseline — likely missing content.
             score -= 4.0
             result.anomalies.append(
                 f"Word count {word_count} is {z:+.1f}σ from corpus mean "
-                f"({mean:.0f} ± {std:.0f}). Very unusual."
+                f"({mean:.0f} ± {std:.0f}). Possible content truncation."
             )
             _add_issue(result, "statistical_baseline", "major",
                        f"Word count anomaly: {word_count} words (z={z:+.1f}). "
                        f"Corpus baseline for {result.detected_jurisdiction}/{result.detected_doc_type}: "
-                       f"{mean:.0f} ± {std:.0f} words.",
+                       f"{mean:.0f} ± {std:.0f} words. Document may be truncated.",
                        impact="-4 pts")
-        elif abs(z) > 3.0:
+        elif z < -3.0:
+            # Moderately below baseline — worth flagging.
             score -= 2.0
             result.anomalies.append(
                 f"Word count {word_count} is {z:+.1f}σ from corpus mean ({mean:.0f})."
             )
             _add_issue(result, "statistical_baseline", "minor",
-                       f"Word count outside expected range: {word_count} words (z={z:+.1f}).",
+                       f"Word count below expected range: {word_count} words (z={z:+.1f}).",
                        impact="-2 pts")
+        elif z > 4.0:
+            # Document is ABOVE baseline — large comprehensive instrument, not an error.
+            # Log as informational only (no score deduction).
+            result.anomalies.append(
+                f"Word count {word_count} is {z:+.1f}σ above corpus mean "
+                f"({mean:.0f} ± {std:.0f}). Large/comprehensive document."
+            )
+            _add_issue(result, "statistical_baseline", "warning",
+                       f"Word count {word_count} exceeds corpus baseline "
+                       f"(z={z:+.1f}, mean={mean:.0f}). Document is larger than typical — "
+                       f"possibly includes companion policy or appendix material.",
+                       impact="0 pts (informational)")
 
     # S2 — Nesting depth
     depth_stats = baseline.get("nesting_depth", {})
@@ -288,8 +302,10 @@ def _check_patterns(raw: str, corpus: dict, result: L3Result) -> None:
                    impact="-2 pts")
 
     # P5 — Check that POLIDOC has both POLIDENT and FREEFORM as immediate-ish children
+    # EXEMPT: TSX By-Laws and Forms use MISCLAW/LEGIDDOC root (no POLIDENT is valid)
     has_polident = "<POLIDENT" in raw
-    if not has_polident:
+    is_tsx_special = bool(re.search(r"<(MISCLAW|LEGIDDOC)[\s>]", raw))
+    if not has_polident and not is_tsx_special:
         score -= 2.0
         _add_issue(result, "pattern_compliance", "critical",
                    "No <POLIDENT> found. All vendor docs have POLIDENT inside POLIDOC.",

@@ -39,6 +39,9 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Optional
 
+# Semantic agent replaces deterministic D3 + D8 (see semantic_content_agent.py)
+from validator.level4_source_compare.semantic_content_agent import check_text_semantic
+
 # ── Optional dependencies ─────────────────────────────────────────────────────
 try:
     import fitz  # PyMuPDF
@@ -258,6 +261,24 @@ class L4Result:
     pipeline_missing_paragraph_details: list[dict] = field(default_factory=list)
     # GAP 5: Table cell-level coverage — DOCX cells not found in SGML
     d4_missing_table_cells: list[dict] = field(default_factory=list)
+    # D8: Word-level gaps — list of {missing: str, line: int}
+    word_gaps: list[dict] = field(default_factory=list)
+
+    # diff_generator compatibility fields — populated by check_text_accuracy()
+    # when a DOCX is available; empty-list defaults ensure no AttributeError
+    # if they are not set (e.g. PDF-only validation path).
+    truncated_paragraphs: list[str] = field(default_factory=list)
+    inline_changed_paragraphs: list[dict] = field(default_factory=list)
+    missing_short_lines: list[str] = field(default_factory=list)
+
+    # diff_generator contact-detail fields (D4-g/h)
+    missing_emails: list[str] = field(default_factory=list)
+    extra_emails: list[str] = field(default_factory=list)
+    missing_phones: list[str] = field(default_factory=list)
+    extra_phones: list[str] = field(default_factory=list)
+    missing_urls: list[str] = field(default_factory=list)
+    extra_urls: list[str] = field(default_factory=list)
+    missing_postal_codes: list[str] = field(default_factory=list)
 
 
 def _add_issue(result: L4Result, dimension: str, severity: str, description: str,
@@ -327,6 +348,13 @@ def _norm(text: str) -> str:
     text = text.replace("\u2212", "-")                          # minus sign → -
     text = text.replace("\u00a0", " ")                          # nbsp → space
     text = text.lower()
+    # Fix inline-tag split artifacts produced when SGML tags like <EM> or <BOLD>
+    # sit inside a hyphenated token or immediately before punctuation:
+    #   "21-<EM>101"  →  strip tag  →  "21- 101"  →  fix  →  "21-101"
+    #   "funds</EM>;" →  strip tag  →  "funds ;"   →  fix  →  "funds;"
+    # Without this, compound numbers (NI 21-101, 33-109, etc.) fail D3 matching.
+    text = re.sub(r'(\w-)\s+(\w)', r'\1\2', text)    # join split hyphenated tokens
+    text = re.sub(r'(\w)\s+([;:,.])', r'\1\2', text)  # rejoin split punctuation
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -459,13 +487,34 @@ def _extract_pdf_data(pdf_path: str) -> _PDFData:
                     if block.get("type") == 1:
                         data.image_count += 1
                     continue
-                # GAP 3: Skip blocks in header zone (top 10%) or footer zone (bottom 8%).
+                # GAP 3: Skip blocks in header zone (top 7%) or footer zone (bottom 7%).
                 # These are running headers/footers that ABBYY already excludes from DOCX.
                 # Geometry-based filtering is more reliable than 100+ regex patterns.
+                # Fix #10: Tightened from 10%/92% → 7%/93% — body content can begin at
+                # 8–9% (e.g. "Effective Date" heading + paragraph at top of a content
+                # page); true running headers are < 6% from the top.
+                # Zone filter: skip running headers / footers.
+                # • Strict zones: top < 7% or bottom > 97% → always skip.
+                # • Gray zones: top 7–10% or bottom 93–97% → skip only if
+                #   block has < 10 words (logos, taglines, page numbers).
+                #   Long blocks (≥ 10 words) in these zones are body paragraphs
+                #   that happen to start near the top or extend near the bottom
+                #   (e.g., content crossing a page break).
                 if _page_h > 0:
                     _bbox = block.get("bbox", (0, 0, 0, _page_h))
-                    if _bbox[1] / _page_h < 0.10 or _bbox[3] / _page_h > 0.92:
+                    _y_top = _bbox[1] / _page_h
+                    _y_bot = _bbox[3] / _page_h
+                    if _y_top < 0.07 or _y_bot > 0.97:
                         continue
+                    if _y_top < 0.10 or _y_bot > 0.93:
+                        # Gray zone: only skip short non-sentence blocks
+                        _gz_words = sum(
+                            len(s["text"].split())
+                            for _l in block.get("lines", [])
+                            for s in _l.get("spans", [])
+                        )
+                        if _gz_words < 10:
+                            continue
                 for line in block.get("lines", []):
                     spans = line.get("spans", [])
                     if not spans:
@@ -701,6 +750,10 @@ def _extract_sgml_text(sgml: str) -> dict:
     text_only = text_only.replace("\u2013", "-").replace("\u2014", "-")
     text_only = text_only.replace("\u2212", "-")
     text_only = text_only.replace("\u00a0", " ")
+    # Fix inline-tag split artifacts (same logic as _norm — keep in sync):
+    # "21-<EM>101" → strip tag → "21- 101" → fix → "21-101"
+    text_only = re.sub(r'(\w-)\s+(\w)', r'\1\2', text_only)
+    text_only = re.sub(r'(\w)\s+([;:,.])', r'\1\2', text_only)
     text_only = re.sub(r"\s+", " ", text_only).strip()
 
     # Extract paragraphs (content inside P tags)
@@ -736,6 +789,12 @@ def _extract_sgml_text(sgml: str) -> dict:
         if _ct and len(_ct.split()) >= 2:
             sgml_table_cells.append(_ct)
 
+    # D4-e fix: store whether the raw SGML contains an <APPENDIX> or <SCHEDDOC>
+    # opening tag. The "text" field has tags stripped so searching it for
+    # "<APPENDIX" would always return False — a direct cause of D4-e false
+    # positives on documents that use <APPENDIX> labels (e.g. CSA Staff Notices).
+    has_appendix_tag = bool(re.search(r"<APPENDIX[\s>]|<SCHEDDOC[\s>]", sgml))
+
     return {
         "text": text_only,
         "paragraphs": paragraphs,
@@ -746,6 +805,7 @@ def _extract_sgml_text(sgml: str) -> dict:
         "graphic_count": graphic_count,
         "attrs": attrs,
         "table_cells": sgml_table_cells,   # GAP 5: TBLCELL text
+        "has_appendix_tag": has_appendix_tag,  # D4-e: raw-SGML tag presence
     }
 
 
@@ -1488,7 +1548,13 @@ def check_completeness(pdf: _PDFData, sgml_data: dict, result: L4Result,
     appendix_in_pdf = bool(re.search(
         r"\b(Schedule|Appendix|Annex|Exhibit)\s+[A-Z\d]", pdf.first_page_text, re.IGNORECASE
     ))
-    appendix_in_sgml = bool(re.search(r"<APPENDIX|<SCHEDDOC|Schedule\s+[A-Z\d]", sgml_data["text"]))
+    # Use the pre-computed boolean from raw SGML (sgml_data["text"] has tags
+    # stripped, so searching it for "<APPENDIX" always returns False — a bug
+    # that caused false positives on every CSA Staff Notice with <APPENDIX>).
+    appendix_in_sgml = (
+        sgml_data.get("has_appendix_tag", False)
+        or bool(re.search(r"Schedule\s+[A-Z\d]", sgml_data["text"]))
+    )
     if appendix_in_pdf and not appendix_in_sgml:
         score -= 0.5
         _add_issue(result, "completeness", "minor",
@@ -1878,6 +1944,573 @@ def check_metadata(pdf: _PDFData, sgml_data: dict, raw_sgml: str, result: L4Resu
 # ─────────────────────────────────────────────────────────────────────────────
 # Main entry point
 # ─────────────────────────────────────────────────────────────────────────────
+# D8: Word-level gap detection (HITL — finds exact missing phrases with line numbers)
+# ─────────────────────────────────────────────────────────────────────────────
+def check_word_gaps(pdf: _PDFData, raw_sgml: str, result: L4Result) -> None:
+    """
+    D8 — informational (no score deduction): Word-level diff between PDF text
+    and SGML text. Finds exact phrases present in the PDF that are absent from
+    the SGML, with the SGML line number where the surrounding context appears.
+
+    Reported as HITL issues so a reviewer can jump to the exact line.
+    Minimum gap: 3 consecutive words missing.
+    """
+    if not pdf.paragraphs:
+        return
+
+    # Build normalised SGML word list with line-number index
+    sgml_lines = raw_sgml.split('\n')
+    sgml_line_words: list[tuple[str, int]] = []   # (word, 1-based line number)
+    for lineno, line in enumerate(sgml_lines, start=1):
+        clean = _norm(re.sub(r'<[^>]+>', ' ', line))
+        for w in clean.split():
+            if w:
+                sgml_line_words.append((w, lineno))
+
+    sgml_words_only = [w for w, _ in sgml_line_words]
+    sgml_blob_norm = ' '.join(sgml_words_only)
+
+    # Build normalised PDF word list (all paragraphs joined)
+    pdf_words: list[str] = []
+    for para in pdf.paragraphs:
+        pdf_words.extend(_norm(para).split())
+
+    if not pdf_words or not sgml_words_only:
+        return
+
+    # Global word-level diff: find blocks in PDF not present in SGML
+    sm = SequenceMatcher(None, pdf_words, sgml_words_only, autojunk=False)
+    gaps: list[dict] = []
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag not in ('delete', 'replace'):
+            continue
+        missing_words = pdf_words[i1:i2]
+        if len(missing_words) < 4:
+            continue  # ignore very short differences (noise / headers / numbers)
+
+        missing_text = ' '.join(missing_words)
+
+        # Skip if the missing phrase is actually present elsewhere in SGML
+        # (difflib may have aligned it differently)
+        if _norm(missing_text) in sgml_blob_norm:
+            continue
+
+        # Skip omittable boilerplate (headers, page numbers, etc.)
+        if _is_omittable(missing_text):
+            continue
+
+        # Find SGML line number: look for context words immediately BEFORE the gap
+        # (last 4 words of PDF before the deletion)
+        context_words = pdf_words[max(0, i1 - 4):i1]
+        line_no = 0
+        if context_words:
+            context_str = ' '.join(context_words)
+            # Search SGML lines for these context words
+            for ln_idx, ln in enumerate(sgml_lines):
+                ln_norm = _norm(re.sub(r'<[^>]+>', ' ', ln))
+                if any(cw in ln_norm for cw in context_words[-2:]):
+                    line_no = ln_idx + 1
+                    break
+
+        # Also try words immediately AFTER the gap for a closer anchor
+        if not line_no:
+            after_words = pdf_words[i2:i2 + 3]
+            for ln_idx, ln in enumerate(sgml_lines):
+                ln_norm = _norm(re.sub(r'<[^>]+>', ' ', ln))
+                if any(aw in ln_norm for aw in after_words):
+                    line_no = ln_idx + 1
+                    break
+
+        loc_str = str(line_no) if line_no else ''
+        # Truncate for readability
+        display = missing_text[:120] + ('...' if len(missing_text) > 120 else '')
+        _add_issue(
+            result,
+            "word_gap",
+            "major",
+            f"D8 — Missing text from PDF not found in SGML: \"{display}\"",
+            location=loc_str,
+            impact="HITL: content gap",
+        )
+        gaps.append({'missing': missing_text, 'line': line_no})
+
+    result.word_gaps = gaps
+
+    # ── D8-b: Paragraph truncation check ─────────────────────────────────────
+    # For each PDF paragraph that IS matched in SGML (Stage 1/2 of _para_covered_v2),
+    # check whether the SGML version has significantly fewer words — which global
+    # difflib misses because it realigns the tail words elsewhere in the document.
+    #
+    # Strategy: find the SGML line block that contains the first 6 words of the
+    # PDF paragraph, then measure word count in that block vs the PDF paragraph.
+    # If SGML block has <60% of PDF word count → truncation detected.
+    # ─────────────────────────────────────────────────────────────────────────
+    sgml_ngrams_set = set()
+    for i in range(len(sgml_words_only) - 4):
+        sgml_ngrams_set.add(tuple(sgml_words_only[i:i + 5]))
+
+    for para in pdf.paragraphs:
+        para_words = _norm(para).split()
+        if len(para_words) < 12:
+            continue  # too short — truncation not meaningful
+
+        # Check if paragraph is covered at all (Stage 1/2 only for speed)
+        anchor = para_words[:6]
+        anchor_gram = tuple(anchor[:5])
+        if anchor_gram not in sgml_ngrams_set:
+            continue  # paragraph not even in SGML — D8 global diff already handles this
+
+        # Find where the anchor appears in the SGML word list
+        anchor_pos = None
+        for si in range(len(sgml_words_only) - 5):
+            if tuple(sgml_words_only[si:si + 5]) == anchor_gram:
+                anchor_pos = si
+                break
+        if anchor_pos is None:
+            continue
+
+        # Count how many PDF words match forward from the anchor
+        pdf_len = len(para_words)
+        matched_ahead = 0
+        si = anchor_pos
+        pi = 0
+        while pi < pdf_len and si < len(sgml_words_only):
+            if sgml_words_only[si] == para_words[pi]:
+                matched_ahead += 1
+                pi += 1
+                si += 1
+            else:
+                # Allow small slippage (skip 1 SGML word)
+                si += 1
+                if si < len(sgml_words_only) and sgml_words_only[si] == para_words[pi]:
+                    matched_ahead += 1
+                    pi += 1
+                    si += 1
+                else:
+                    break  # diverged
+
+        sgml_coverage = matched_ahead / pdf_len
+        if sgml_coverage < 0.60 and matched_ahead >= 6:
+            # Truncation detected — estimate missing tail
+            missing_tail_words = para_words[matched_ahead:]
+            if len(missing_tail_words) < 4:
+                continue
+            missing_tail = ' '.join(missing_tail_words)
+            if _norm(missing_tail) in sgml_blob_norm:
+                continue  # tail present elsewhere — not a truncation
+            # Guard against PyMuPDF paragraph-merge false positives: when the
+            # PDF extractor merges multiple SGML paragraphs into one large
+            # "paragraph", D8-b fires because coverage is low — but the
+            # "missing tail" is actually present in the SGML in adjacent
+            # paragraphs. If the first 5 words of the tail form a known SGML
+            # 5-gram, the content exists — this is a merge artifact, not a
+            # real truncation.
+            if (len(missing_tail_words) >= 5
+                    and tuple(missing_tail_words[:5]) in sgml_ngrams_set):
+                continue
+            # Additional merge-artifact guard: very long PDF "paragraphs"
+            # (>50 words) where only a tiny fraction matched are almost
+            # always table cells + section headers merged by PyMuPDF.
+            # Require at least 15 matched words before flagging long paras.
+            if pdf_len > 50 and matched_ahead < 15:
+                continue
+            if _is_omittable(missing_tail):
+                continue
+            # Fragmented-SGML guard: if ≥55% of 4-grams from the missing tail
+            # appear anywhere in the SGML blob, the content is present but split
+            # across SGML elements by PyMuPDF paragraph merging — not a real truncation.
+            if len(missing_tail_words) >= 8:
+                _tail_4gs = [
+                    ' '.join(missing_tail_words[_ti:_ti + 4])
+                    for _ti in range(len(missing_tail_words) - 3)
+                ]
+                _found_4g = sum(1 for _g in _tail_4gs if _g in sgml_blob_norm)
+                if _found_4g / len(_tail_4gs) > 0.55:
+                    continue  # majority of tail present in SGML (fragmented) — merge artifact
+
+            # Find line number via anchor context
+            anchor_str = ' '.join(anchor[:3])
+            trunc_line = 0
+            for ln_idx, ln in enumerate(sgml_lines):
+                ln_norm = _norm(re.sub(r'<[^>]+>', ' ', ln))
+                if any(aw in ln_norm for aw in anchor[:2]):
+                    trunc_line = ln_idx + 1
+                    break
+
+            display = missing_tail[:120] + ('...' if len(missing_tail) > 120 else '')
+            _add_issue(
+                result,
+                "word_gap",
+                "major",
+                f"D8-b — Paragraph truncated in SGML ({int(sgml_coverage*100)}% covered). "
+                f"Missing tail: \"{display}\"",
+                location=str(trunc_line) if trunc_line else '',
+                impact="HITL: paragraph truncation",
+            )
+            gaps.append({'missing': missing_tail, 'line': trunc_line, 'type': 'truncation'})
+
+    # ── D8-c: Short bold phrases from PDF absent from SGML ────────────────────
+    # The main gap loop requires ≥4 words to avoid noise. Bold-span deletions
+    # (e.g. <BOLD>NI 31-103</BOLD> removed) are often 2-3 words — below that
+    # threshold. Here we check PDF bold spans of exactly 2-3 words that are
+    # completely absent from the SGML plain text. The sgml_blob_norm guard
+    # ensures we only flag phrases genuinely missing from the document, not
+    # phrases that exist as plain text elsewhere (which would be harmless).
+    pdf_heading_norms = {_norm(h) for h in pdf.headings}
+    seen_bold_short: set[str] = set()
+    for bold_span in pdf.bold_spans:
+        norm_b = _norm(bold_span)
+        words_b = norm_b.split()
+        if len(words_b) < 2 or len(words_b) > 3:
+            continue  # only target short phrases the main loop skips
+        if norm_b in seen_bold_short:
+            continue
+        seen_bold_short.add(norm_b)
+        if _is_omittable(bold_span):
+            continue
+        if norm_b in sgml_blob_norm:
+            continue  # text exists somewhere in SGML — not a deletion
+        if any(norm_b in ph or ph in norm_b for ph in pdf_heading_norms):
+            continue  # part of a heading, not a body bold span
+        # Completely absent from SGML — flag as a likely deleted bold element
+        _add_issue(
+            result,
+            "word_gap",
+            "major",
+            f"D8-c — Short bold phrase from PDF absent from SGML: \"{bold_span[:80]}\"",
+            location='',
+            impact="HITL: bold content gap",
+        )
+        gaps.append({'missing': norm_b, 'line': 0, 'type': 'bold_short'})
+
+    # ── D8-d: Leading text deletion check ────────────────────────────────────
+    # Mirror of D8-b (tail truncation). D8-b anchors on the FIRST 6 words of
+    # a PDF paragraph — so when those words themselves are deleted (e.g.
+    # "As of April 1, 2026" removed from the start of a paragraph), D8-b
+    # silently skips the paragraph and D8 global diff misses it because the
+    # remaining words are present.
+    #
+    # Strategy: for each PDF paragraph, use words 4-8 as a "body anchor" (skip
+    # the lead). If the body anchor IS in SGML, the paragraph body is there.
+    # Then check whether the lead words (first 4) are present in SGML immediately
+    # before the body anchor position. If they are NOT → leading text was deleted.
+    # ─────────────────────────────────────────────────────────────────────────
+    for para in pdf.paragraphs:
+        para_words = _norm(para).split()
+        if len(para_words) < 10:
+            continue  # too short to have meaningful leading deletion
+
+        lead_words  = para_words[:5]       # words 0-4 (the potentially deleted lead)
+        body_anchor = tuple(para_words[5:10])  # words 5-9 — entirely past the lead, in paragraph body
+
+        # Body must be in SGML — otherwise D8/D8-b handle it
+        if body_anchor not in sgml_ngrams_set:
+            continue
+
+        # Lead must be genuinely absent from SGML (not just misaligned)
+        lead_norm = ' '.join(lead_words)
+        if len(lead_words) < 4:
+            continue
+        if _is_omittable(lead_norm):
+            continue
+        if lead_norm in sgml_blob_norm:
+            continue  # lead present somewhere in SGML — not a deletion
+
+        # Locate body anchor in SGML word list
+        body_pos = None
+        for si in range(len(sgml_words_only) - 5):
+            if tuple(sgml_words_only[si:si + 5]) == body_anchor:
+                body_pos = si
+                break
+        if body_pos is None:
+            continue
+
+        # Confirm: SGML words immediately before body_pos don't match the lead
+        sgml_before = sgml_words_only[max(0, body_pos - 5): body_pos]
+        lead_present_before = any(lead_words[i] == sgml_before[j]
+                                  for i in range(len(lead_words))
+                                  for j in range(len(sgml_before))
+                                  if abs(i - j) <= 1)
+        if lead_present_before:
+            continue  # lead is actually adjacent — not deleted
+
+        # Find SGML line number from body anchor
+        lead_line = 0
+        for ln_idx, ln in enumerate(sgml_lines):
+            ln_norm = _norm(re.sub(r'<[^>]+>', ' ', ln))
+            if any(w in ln_norm for w in body_anchor[:2]):
+                lead_line = ln_idx + 1
+                break
+
+        display = lead_norm[:120]
+        _add_issue(
+            result,
+            "word_gap",
+            "major",
+            f"D8-d — Leading text deleted from paragraph: \"{display}\"",
+            location=str(lead_line) if lead_line else '',
+            impact="HITL: paragraph head deletion",
+        )
+        gaps.append({'missing': lead_norm, 'line': lead_line, 'type': 'head_deletion'})
+
+    # ── D8-e: Paragraph-local contextual gap detection ────────────────────────
+    # D8 global diff misses deletions when the removed text appears elsewhere in
+    # the SGML document (the sgml_blob_norm skip fires). D8-e works paragraph-
+    # by-paragraph: it locates each PDF paragraph in SGML via a body anchor,
+    # extracts a tight local window, and runs SequenceMatcher in that context.
+    # This catches leading / middle / trailing deletions that D8 misses.
+    # Threshold: 3 words (vs D8's 4) — safe because comparison is contextual.
+    _STOP_WORDS_E = frozenset({
+        'the', 'a', 'an', 'of', 'in', 'to', 'and', 'or', 'is', 'are',
+        'was', 'be', 'that', 'this', 'it', 'as', 'at', 'by', 'for',
+        'on', 'with', 'not', 'from', 'its', 'into', 'we', 'our',
+    })
+    # Words that indicate legal/regulatory body text rather than a contact block.
+    # If an interior gap (D8-e) contains NONE of these, it is likely a name list,
+    # signature block, or other non-substantive content — skip it.
+    _LEGAL_KW_E = frozenset([
+        'section', 'subsection', 'paragraph', 'clause', 'subclause',
+        'amended', 'amend', 'amendment', 'repeal', 'repealed', 'revoked',
+        'regulation', 'regulations', 'rule', 'rules', 'instrument',
+        'requirement', 'requirements', 'obligation', 'obligations',
+        'provision', 'provisions', 'schedule', 'appendix', 'annex',
+        'agreement', 'pursuant', 'compliance', 'disclosure',
+        'exemption', 'exemptions', 'registration', 'filing',
+        'prospectus', 'securities', 'security', 'issuer', 'issuers',
+        'dealer', 'dealers', 'adviser', 'advisers', 'fund', 'funds',
+        'order', 'policy', 'policies', 'act', 'statute', 'notice',
+        'bulletin', 'effective', 'adopted', 'applies', 'apply',
+        'permitted', 'prohibited', 'required', 'written',
+    ])
+    # Seed dedup with gaps already reported by D8/D8-b/D8-c/D8-d
+    seen_d8e: set[str] = {g['missing'][:50] for g in gaps}
+
+    for para in pdf.paragraphs:
+        para_words = _norm(para).split()
+        if len(para_words) < 8:
+            continue
+
+        # Try 5-gram anchors from pdf position 2 onwards — starting at 2 lets
+        # us detect leading deletions where the first 1-4 words are gone
+        anchor_pos_e: int | None = None
+        anchor_off_e: int | None = None
+        for pdf_start in range(2, min(len(para_words) - 5, 20)):
+            candidate = tuple(para_words[pdf_start:pdf_start + 5])
+            if candidate in sgml_ngrams_set:
+                for si in range(len(sgml_words_only) - 5):
+                    if tuple(sgml_words_only[si:si + 5]) == candidate:
+                        anchor_pos_e = si
+                        anchor_off_e = pdf_start
+                        break
+                if anchor_pos_e is not None:
+                    break
+
+        if anchor_pos_e is None:
+            continue  # whole paragraph absent — D8/D8-b cover this
+
+        # Tight local SGML window around the anchor
+        win_start = max(0, anchor_pos_e - anchor_off_e - 2)
+        win_end   = min(len(sgml_words_only), anchor_pos_e + len(para_words) + 10)
+        sgml_window = sgml_words_only[win_start:win_end]
+        sgml_win_text = ' '.join(sgml_window)
+
+        # Local diff: PDF paragraph words vs SGML window words
+        sm_e = SequenceMatcher(None, para_words, sgml_window, autojunk=False)
+        for tag, i1, i2, _j1, _j2 in sm_e.get_opcodes():
+            if tag not in ('delete', 'replace'):
+                continue
+            missing_w = para_words[i1:i2]
+            if len(missing_w) < 3:
+                continue
+            missing_txt = ' '.join(missing_w)
+            missing_nrm = _norm(missing_txt)
+            # Must contain at least one content word (not all stopwords)
+            if all(w in _STOP_WORDS_E for w in missing_w):
+                continue
+            if _is_omittable(missing_txt):
+                continue
+            # Contextual guard: not present in the local SGML window
+            if missing_nrm in sgml_win_text:
+                continue
+            # Global SGML blob check: text may be present in a different paragraph
+            if missing_nrm in sgml_blob_norm:
+                continue
+            # For longer gaps, check 4-gram coverage across the full SGML blob.
+            # If ≥55% of the gap's 4-grams are present (fragmented across elements),
+            # this is a PyMuPDF merge artefact, not a real deletion.
+            if len(missing_w) >= 8:
+                _gap_4gs = [
+                    ' '.join(missing_w[_gi:_gi + 4])
+                    for _gi in range(len(missing_w) - 3)
+                ]
+                _found_4g = sum(1 for _g in _gap_4gs if _g in sgml_blob_norm)
+                if _found_4g / len(_gap_4gs) > 0.55:
+                    continue  # majority of gap words in SGML (fragmented) — merge artifact
+            # Legal-content guard: if the gap has no regulatory/legal keywords it is
+            # likely a contact block, name list, or signature line — skip it.
+            if len(missing_w) >= 5 and not any(w in _LEGAL_KW_E for w in missing_w):
+                continue
+            sig = missing_nrm[:50]
+            if sig in seen_d8e:
+                continue
+            seen_d8e.add(sig)
+
+            # Locate line via anchor word
+            e_line = 0
+            anchor_word = para_words[anchor_off_e] if anchor_off_e < len(para_words) else ''
+            for ln_idx, ln in enumerate(sgml_lines):
+                ln_nrm = _norm(re.sub(r'<[^>]+>', ' ', ln))
+                if anchor_word and anchor_word in ln_nrm:
+                    e_line = ln_idx + 1
+                    break
+
+            _add_issue(
+                result, "word_gap", "major",
+                f"D8-e — Text gap within paragraph: \"{missing_txt[:120]}\"",
+                location=str(e_line) if e_line else '',
+                impact="HITL: paragraph interior/leading gap",
+            )
+            gaps.append({'missing': missing_nrm, 'line': e_line, 'type': 'interior'})
+
+    # ── D8-f: Dollar amount / percentage mismatch ────────────────────────────
+    # Catches cases where a number was changed (e.g. "$300" → "$250") rather
+    # than deleted. For each PDF paragraph matched in SGML, extracts dollar
+    # amounts and percentages from both and flags any value present in the PDF
+    # paragraph that is absent from the corresponding SGML window.
+    _AMOUNT_RE = re.compile(
+        r'\$[\d,]+(?:\.\d+)?'       # $300, $1,234.56
+        r'|\b\d+(?:\.\d+)?\s*%'     # 15%, 0.5 %
+        r'|\b(?:19|20)\d{2}\b'       # years 1900-2099
+    )
+
+    def _norm_amount(s: str) -> str:
+        return re.sub(r'[\s,]', '', s).lower()
+
+    seen_d8f: set[str] = set()
+
+    for para in pdf.paragraphs:
+        para_words = _norm(para).split()
+        if len(para_words) < 6:
+            continue
+        pdf_amounts = _AMOUNT_RE.findall(para)
+        if not pdf_amounts:
+            continue
+
+        # Locate paragraph in SGML (same anchor strategy as D8-e)
+        anchor_pos_f: int | None = None
+        anchor_off_f: int | None = None
+        for pdf_start in range(0, min(len(para_words) - 5, 20)):
+            candidate = tuple(para_words[pdf_start:pdf_start + 5])
+            if candidate in sgml_ngrams_set:
+                for si in range(len(sgml_words_only) - 5):
+                    if tuple(sgml_words_only[si:si + 5]) == candidate:
+                        anchor_pos_f = si
+                        anchor_off_f = pdf_start
+                        break
+                if anchor_pos_f is not None:
+                    break
+
+        if anchor_pos_f is None:
+            continue
+
+        win_start = max(0, anchor_pos_f - anchor_off_f - 2)
+        win_end   = min(len(sgml_words_only), anchor_pos_f + len(para_words) + 10)
+        sgml_win_f = ' '.join(sgml_words_only[win_start:win_end])
+        # Also check raw SGML text around the anchor (preserves $ signs stripped by _norm)
+        approx_line = 0
+        for ln_idx, ln in enumerate(sgml_lines):
+            if anchor_off_f < len(para_words) and para_words[anchor_off_f] in _norm(re.sub(r'<[^>]+>', ' ', ln)):
+                approx_line = ln_idx + 1
+                break
+        # Reconstruct raw SGML window ±30 lines for amount comparison
+        raw_win_lines = sgml_lines[max(0, approx_line - 5): min(len(sgml_lines), approx_line + 15)]
+        raw_win = re.sub(r'<[^>]+>', ' ', ' '.join(raw_win_lines))
+        sgml_amounts = set(_norm_amount(a) for a in _AMOUNT_RE.findall(raw_win))
+
+        for amt in pdf_amounts:
+            amt_n = _norm_amount(amt)
+            if amt_n in seen_d8f:
+                continue
+            if amt_n not in sgml_amounts:
+                # Cross-check against full SGML (in case the amount is present but distant)
+                full_sgml_raw = re.sub(r'<[^>]+>', ' ', raw_sgml)
+                if amt_n in (_norm_amount(a) for a in _AMOUNT_RE.findall(full_sgml_raw)):
+                    continue  # present elsewhere — skip
+                seen_d8f.add(amt_n)
+                _add_issue(
+                    result, "word_gap", "major",
+                    f"D8-f — Amount/date in PDF not found in SGML: \"{amt}\"",
+                    location=str(approx_line) if approx_line else '',
+                    impact="HITL: possible number substitution",
+                )
+                gaps.append({'missing': amt_n, 'line': approx_line, 'type': 'amount'})
+
+    result.word_gaps = gaps
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D9: Contact info presence check (phone / email / URL)
+# ─────────────────────────────────────────────────────────────────────────────
+_RE_PHONE = re.compile(
+    r'(?<!\d)(\+?1[-.\s]?)?(\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4})(?!\d)'
+)
+_RE_EMAIL = re.compile(
+    r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
+)
+_RE_URL = re.compile(
+    r'https?://[^\s<>"&]{8,}|www\.[^\s<>"&]{5,}'
+)
+
+
+def check_contact_info(pdf: _PDFData, raw_sgml: str, result: L4Result) -> None:
+    """
+    D9 — detect phone numbers, email addresses, and URLs that appear in the PDF
+    source but are absent from the SGML.
+
+    SCORING FIX (diagnostic assessment): D9 findings previously had NO score
+    deduction despite being flagged as 'major' issues.  Now each missing contact
+    item deducts 0.3 pts from completeness_score (capped at -1.5 pts total for
+    D9).  This makes URL/email/phone deletions visible in the normalised score.
+    """
+    if not pdf.paragraphs:
+        return
+
+    pdf_text  = '\n'.join(pdf.paragraphs)
+    sgml_text = re.sub(r'<[^>]+>', ' ', raw_sgml)
+    d9_count = [0]   # mutable counter for deduction cap
+
+    def _find_missing(pattern, label):
+        pdf_items  = set(m.group(0).strip() for m in pattern.finditer(pdf_text))
+        sgml_items = set(m.group(0).strip() for m in pattern.finditer(sgml_text))
+        # Normalise phone numbers (strip spaces/dashes) for comparison
+        def _norm_item(s):
+            return re.sub(r'[\s\-.()+]', '', s).lower()
+        sgml_norm = {_norm_item(s) for s in sgml_items}
+        missing = [item for item in sorted(pdf_items)
+                   if _norm_item(item) not in sgml_norm]
+        for item in missing:
+            _add_issue(
+                result,
+                "contact_info",
+                "major",
+                f"D9 — {label} in PDF not found in SGML: \"{item}\"",
+                location="",
+                impact="HITL: contact info gap",
+            )
+            d9_count[0] += 1
+
+    _find_missing(_RE_PHONE, "Phone number")
+    _find_missing(_RE_EMAIL, "Email address")
+    _find_missing(_RE_URL,   "URL/hyperlink")
+
+    # Apply score deduction for D9 findings (capped at 1.5 pts)
+    if d9_count[0] > 0:
+        deduction = min(1.5, d9_count[0] * 0.3)
+        result.completeness_score = max(0.0, result.completeness_score - deduction)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 def validate_source_comparison(
     raw_sgml: str,
     pdf_path: Optional[str] = None,
@@ -1960,11 +2593,14 @@ def validate_source_comparison(
         result.tagging_score = 5.0  # assume pass on error
         result.warnings.append(f"D2 check error (skipped): {e}")
 
+    # D3 + D8: replaced by SemanticContentAgent v2 (section-aware, batched)
+    _doc_type = sgml_data.get("attrs", {}).get("LABEL", "Notice")
     try:
-        check_text_accuracy(pdf, sgml_data, result, docx_data=_docx_data)
+        check_text_semantic(pdf, sgml_data, result,
+                            doc_type=_doc_type, raw_sgml=raw_sgml)
     except Exception as e:
         result.text_score = 8.0
-        result.warnings.append(f"D3 check error (skipped): {e}")
+        result.warnings.append(f"D3/D8 semantic agent error (skipped): {e}")
 
     try:
         check_completeness(pdf, sgml_data, result, docx_data=_docx_data)
@@ -1983,6 +2619,13 @@ def validate_source_comparison(
     except Exception as e:
         result.metadata_score = 3.0
         result.warnings.append(f"D7 check error (skipped): {e}")
+
+    # D8 word-gap check removed — now handled by SemanticContentAgent above.
+
+    try:
+        check_contact_info(pdf, raw_sgml, result)
+    except Exception as e:
+        result.warnings.append(f"D9 contact-info check error (skipped): {e}")
 
     result.score = (
         result.tagging_score +

@@ -218,6 +218,14 @@ CARSWELL_ENTITY_MAP: dict = _build_entity_map()
 # All valid entity names (250+) - used by structural validator
 VALID_CARSWELL_ENTITY_NAMES: frozenset = frozenset(CARSWELL_ENTITY_MAP.keys())
 
+# Compiled pattern to self-close known Carswell SGML void elements.
+# These tags have no closing tag in Carswell DTD v4.7 (valid SGML, invalid XML).
+# Example: <TBLCDEF COLWD="50" HALIGN="LEFT"> -> <TBLCDEF COLWD="50" HALIGN="LEFT"/>
+_SGML_VOID_RE = re.compile(
+    r"<(TBLCDEF|GRAPHIC|NEWLINE|DOTTAB|HR|BR)\b([^>]*)(?<!/)>",
+    re.IGNORECASE,
+)
+
 
 def preprocess_sgml(raw: str) -> str:
     """
@@ -230,9 +238,15 @@ def preprocess_sgml(raw: str) -> str:
 
     Returns XML-parseable string.
     """
-    # Strip DOCTYPE and SGML processing instructions
+    # Strip DOCTYPE and SGML processing instructions.
+    # The PI regex handles both:
+    #   XML-style:   <?xml version="1.0"?>  (ends with ?>)
+    #   SGML-style:  <?TBLROW 1>           (ends with > only)
     text = re.sub(r"<!DOCTYPE[^>]*>", "", raw, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<\?[^>]*\?>", "", text)
+    text = re.sub(r"<\?[^>]*>", "", text)
+    # Self-close Carswell SGML void elements so the XML parser treats them
+    # as empty elements rather than unclosed open tags.
+    text = _SGML_VOID_RE.sub(r"<\1\2/>", text)
 
     def _replace_entity(m: re.Match) -> str:
         name = m.group(1)

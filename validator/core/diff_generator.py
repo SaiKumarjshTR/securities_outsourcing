@@ -284,11 +284,21 @@ def _fixes_d7(lines: list[str], l4: L4Result) -> list[ActionableFix]:
 # Confidence: HIGH if exact text match; MEDIUM if fuzzy
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Maximum D2 fix suggestions per span type. Large instruments can have 100+
+# untagged bold/italic spans (section numbers like "1. (1)"). Showing all of
+# them buries the truly actionable fixes in noise. Cap each type so HITL sees
+# the most representative examples and is not overwhelmed.
+_MAX_D2_BOLD_FIXES    = 10
+_MAX_D2_ITALIC_FIXES  = 10
+_MAX_D2_HEADING_FIXES = 10
+
+
 def _fixes_d2(lines: list[str], l4: L4Result) -> list[ActionableFix]:
     fixes: list[ActionableFix] = []
 
-    # ── Bold spans → <BOLD> ───────────────────────────────────────────────────
-    for span in l4.d2_untagged_bold:  # show ALL occurrences, no cap
+    # ── Bold spans → <BOLD> ─────────────────────────────────────────────────────────────────────────
+    bold_fixes: list[ActionableFix] = []
+    for span in l4.d2_untagged_bold:
         if _is_omittable(span) or len(span.split()) < 2:
             continue
         match_lines = _find_text_in_sgml(lines, span)
@@ -317,7 +327,7 @@ def _fixes_d2(lines: list[str], l4: L4Result) -> list[ActionableFix]:
             ))
         else:
             # Text not found — cannot locate line
-            fixes.append(ActionableFix(
+            bold_fixes.append(ActionableFix(
                 dimension="D2",
                 severity="minor",
                 description=f"Bold text from PDF not found in SGML: '{span[:50]}'",
@@ -331,9 +341,13 @@ def _fixes_d2(lines: list[str], l4: L4Result) -> list[ActionableFix]:
                 auto_fixable=False,
                 highlight_lines=[],
             ))
+        if len(bold_fixes) >= _MAX_D2_BOLD_FIXES:
+            break
+    fixes.extend(bold_fixes)
 
-    # ── Italic spans → <EM> ──────────────────────────────────────────────────
-    for span in l4.d2_untagged_italic:  # show ALL occurrences, no cap
+    # ── Italic spans → <EM> ─────────────────────────────────────────────────────────────────────────
+    italic_fixes: list[ActionableFix] = []
+    for span in l4.d2_untagged_italic:
         if _is_omittable(span) or len(span.split()) < 2:
             continue
         match_lines = _find_text_in_sgml(lines, span)
@@ -360,9 +374,13 @@ def _fixes_d2(lines: list[str], l4: L4Result) -> list[ActionableFix]:
                 _fix_old=line if exact else "",
                 _fix_new=corrected if exact else "",
             ))
+        if len(italic_fixes) >= _MAX_D2_ITALIC_FIXES:
+            break
+    fixes.extend(italic_fixes)
 
-    # ── Untagged headings → <TI> ──────────────────────────────────────────────
-    for heading in l4.d2_untagged_headings:  # show ALL occurrences, no cap
+    # ── Untagged headings → <TI> ──────────────────────────────────────────────────────────────────
+    heading_fixes: list[ActionableFix] = []
+    for heading in l4.d2_untagged_headings:
         if _is_omittable(heading) or len(heading.split()) < 2:
             continue
         match_lines = _find_text_in_sgml(lines, heading)
@@ -388,6 +406,9 @@ def _fixes_d2(lines: list[str], l4: L4Result) -> list[ActionableFix]:
                 auto_fixable=False,   # heading restructuring changes BLOCK structure
                 highlight_lines=[i + 1],
             ))
+        if len(heading_fixes) >= _MAX_D2_HEADING_FIXES:
+            break
+    fixes.extend(heading_fixes)
 
     return fixes
 
@@ -450,6 +471,179 @@ def _fixes_d5(lines: list[str], l4: L4Result) -> list[ActionableFix]:
 # D3  Missing paragraphs — heuristic placement
 # Confidence: MEDIUM   Auto-fixable: NO
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Maximum D3 fix suggestions per document. Large instruments (e.g. NI 93-101)
+# include companion policy and appendix text in the PDF that is intentionally
+# absent from the main SGML file. Generating hundreds of fix suggestions for
+# this case is misleading noise for HITL reviewers.
+_MAX_D3_FIXES = 15
+
+
+def _fixes_d3_truncated(lines: list[str], l4: L4Result) -> list[ActionableFix]:
+    """
+    D3-d: Paragraphs present in SGML but with leading text deleted.
+
+    For each truncated paragraph, locate the SGML line, show the SGML version
+    versus what the PDF had, and tell the HITL reviewer what prefix is missing.
+    """
+    fixes: list[ActionableFix] = []
+    if not l4.truncated_paragraphs:
+        return fixes
+
+    for para in l4.truncated_paragraphs[:_MAX_D3_FIXES]:
+        norm_words = _norm(para).split()
+        # Try to find the paragraph in SGML using its LATER words (since leading words are gone).
+        # If the initial window fails (heavily truncated or different encoding), try progressively
+        # later word windows until a match is found.
+        sgml_line_idx = -1
+        for _offset in [5, 10, 15, 20, 25]:
+            _end = _offset + 10
+            if _end > len(norm_words):
+                break
+            search_text = " ".join(norm_words[_offset:_end])
+            match_lines = _find_text_in_sgml(lines, search_text)
+            if match_lines:
+                sgml_line_idx = match_lines[0]
+                break
+        # Last resort: first 8 words (paragraph might be only lightly truncated)
+        if sgml_line_idx < 0 and len(norm_words) >= 4:
+            search_text = " ".join(norm_words[:8])
+            match_lines = _find_text_in_sgml(lines, search_text)
+            sgml_line_idx = match_lines[0] if match_lines else -1
+
+        # The deleted prefix: first 5 words of the PDF paragraph
+        missing_prefix = " ".join(para.split()[:8])
+        sgml_snippet = lines[sgml_line_idx].strip()[:120] if sgml_line_idx >= 0 else "(line not located)"
+
+        fixes.append(ActionableFix(
+            dimension="D3",
+            severity="major",
+            description=(
+                f"Paragraph has text deleted from its beginning. "
+                f"PDF starts: '{para[:80]}' — "
+                f"SGML is missing: '{missing_prefix}'"
+            ),
+            line_number=sgml_line_idx + 1 if sgml_line_idx >= 0 else 0,
+            line_content=sgml_snippet[:120],
+            context_before=_context(lines, sgml_line_idx) if sgml_line_idx >= 0 else "",
+            suggested_fix=(
+                f"The SGML paragraph is missing its opening text.\n\n"
+                f"PDF source starts with:\n  '{para[:200]}'\n\n"
+                f"SGML has (truncated version):\n  '{sgml_snippet}'\n\n"
+                f"Prepend the missing prefix:\n"
+                f"  '{missing_prefix}...'"
+            ),
+            pdf_evidence=f'PDF full paragraph: "{para[:300]}"',
+            pdf_page=0,
+            confidence="high",
+            auto_fixable=False,
+            highlight_lines=[sgml_line_idx + 1] if sgml_line_idx >= 0 else [],
+        ))
+
+    return fixes
+
+
+def _fixes_d3_mutations(lines: list[str], l4: L4Result) -> list[ActionableFix]:
+    """
+    D3-e: Paragraphs present in SGML but with inline word additions/deletions.
+
+    For each mutation, find the SGML line and show a word-level diff so the
+    HITL reviewer knows exactly which words were changed.
+    """
+    fixes: list[ActionableFix] = []
+    if not l4.inline_changed_paragraphs:
+        return fixes
+
+    for mut in l4.inline_changed_paragraphs[:_MAX_D3_FIXES]:
+        # Find the SGML line that has the mutated text
+        sgml_snippet_words = mut.get("sgml_text", "").split()
+        search_anchor = " ".join(sgml_snippet_words[:8]) if len(sgml_snippet_words) >= 8 else mut.get("sgml_text", "")[:60]
+        match_lines = _find_text_in_sgml(lines, search_anchor)
+        sgml_line_idx = match_lines[0] if match_lines else -1
+
+        deleted = mut.get("deleted_words", [])
+        inserted = mut.get("inserted_words", [])
+        ratio = mut.get("ratio", 0.0)
+
+        # Build human-readable diff description
+        diff_parts = []
+        if deleted:
+            diff_parts.append(f"DELETED from PDF: {deleted[:10]}")
+        if inserted:
+            diff_parts.append(f"ADDED in SGML (not in PDF): {inserted[:10]}")
+
+        diff_display = "\n".join(diff_parts) if diff_parts else "minor wording differences"
+
+        fixes.append(ActionableFix(
+            dimension="D3",
+            severity="major",
+            description=(
+                f"Paragraph text was modified (similarity {ratio:.0%}). "
+                + (f"Words deleted: {deleted[:5]} " if deleted else "")
+                + (f"Words added: {inserted[:5]}" if inserted else "")
+            ),
+            line_number=sgml_line_idx + 1 if sgml_line_idx >= 0 else 0,
+            line_content=(
+                lines[sgml_line_idx].strip()[:120] if sgml_line_idx >= 0 else mut.get("sgml_text", "")[:120]
+            ),
+            context_before=_context(lines, sgml_line_idx) if sgml_line_idx >= 0 else "",
+            suggested_fix=(
+                f"Word-level diff between PDF source and SGML:\n\n"
+                f"{diff_display}\n\n"
+                f"PDF original:\n  '{mut.get('pdf_text', '')[:300]}'\n\n"
+                f"SGML current:\n  '{mut.get('sgml_text', '')[:300]}'\n\n"
+                f"Correct the SGML to match the PDF source exactly."
+            ),
+            pdf_evidence=f'PDF paragraph: "{mut.get("pdf_text", "")[:250]}"',
+            pdf_page=0,
+            confidence="medium",
+            auto_fixable=False,
+            highlight_lines=[sgml_line_idx + 1] if sgml_line_idx >= 0 else [],
+        ))
+
+    return fixes
+
+
+def _fixes_d3_short_lines(lines: list[str], l4: L4Result) -> list[ActionableFix]:
+    """
+    D3-f: Short lines (3-4 words) from PDF/DOCX not found anywhere in SGML.
+
+    These are often contact lines, date phrases, or short labels that were
+    silently deleted from the SGML during processing.
+    """
+    fixes: list[ActionableFix] = []
+    if not l4.missing_short_lines:
+        return fixes
+
+    # Find a reasonable insertion point near the end of the document
+    fallback_line = len(lines) - 1
+    for i in range(len(lines) - 1, max(0, len(lines) - 20), -1):
+        if re.search(r"</FREEFORM>|</POLIDOC>|</BLOCK", lines[i]):
+            fallback_line = max(0, i - 1)
+            break
+
+    for short_line in l4.missing_short_lines[:10]:
+        fixes.append(ActionableFix(
+            dimension="D3",
+            severity="minor",
+            description=f"Short line from PDF not found in SGML: '{short_line}'",
+            line_number=fallback_line + 1,
+            line_content=lines[fallback_line].strip()[:120] if fallback_line < len(lines) else "",
+            context_before=_context(lines, fallback_line),
+            suggested_fix=(
+                f"This short text from the PDF is absent from the SGML:\n\n"
+                f"  '{short_line}'\n\n"
+                f"Check if it should appear as a <P> paragraph or contact line."
+            ),
+            pdf_evidence=f'PDF line: "{short_line}"',
+            pdf_page=0,
+            confidence="medium",
+            auto_fixable=False,
+            highlight_lines=[],
+        ))
+
+    return fixes
+
 
 def _fixes_d3(lines: list[str], l4: L4Result) -> list[ActionableFix]:
     """
@@ -530,7 +724,7 @@ def _fixes_d3(lines: list[str], l4: L4Result) -> list[ActionableFix]:
             highlight_lines=[insertion_line + 1] if insertion_line >= 0 else [],
         ))
 
-    return fixes
+    return fixes[:_MAX_D3_FIXES]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -610,6 +804,155 @@ def _fixes_d4(lines: list[str], l4: L4Result) -> list[ActionableFix]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SEVERITY_RANK = {"critical": 0, "major": 1, "minor": 2}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D4-g/h  Contact details — emails, phones, URLs, postal codes
+# Confidence: HIGH (exact pattern match)   Auto-fixable: NO
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _fixes_contact_details(lines: list[str], l4: L4Result) -> list[ActionableFix]:
+    """
+    Generate HITL fix cards for missing contact details detected by check_contact_details().
+
+    Covers: email addresses (D4-g), phone numbers (D4-g), URLs/hyperlinks (D4-h),
+    Canadian postal codes (D4-g), and SGML-only items that don't appear in the PDF
+    (flagged as possible fabrication or copy-paste error).
+    """
+    fixes: list[ActionableFix] = []
+
+    # Find a general insertion region near the end of the document body
+    fallback_line = len(lines) - 1
+    for i in range(len(lines) - 1, max(0, len(lines) - 30), -1):
+        if re.search(r"</FREEFORM>|</POLIDOC>|</BLOCK", lines[i]):
+            fallback_line = max(0, i - 1)
+            break
+
+    # ── Missing emails ────────────────────────────────────────────────────────
+    for email in l4.missing_emails[:8]:
+        # Try to find the nearest context in SGML (partial domain match)
+        domain = email.split("@")[-1] if "@" in email else ""
+        match_lines = _find_text_in_sgml(lines, domain) if domain else []
+        ln_idx = match_lines[0] if match_lines else fallback_line
+
+        fixes.append(ActionableFix(
+            dimension="D4",
+            severity="major",
+            description=f"Email address from PDF missing in SGML: '{email}'",
+            line_number=ln_idx + 1,
+            line_content=lines[ln_idx].strip()[:120] if ln_idx < len(lines) else "",
+            context_before=_context(lines, ln_idx),
+            suggested_fix=(
+                f"The email address '{email}' appears in the source PDF but is "
+                f"absent from the SGML.\n\n"
+                f"Add to the appropriate location:\n  {email}"
+            ),
+            pdf_evidence=f'Source PDF email: "{email}"',
+            pdf_page=0,
+            confidence="high",
+            auto_fixable=False,
+            highlight_lines=[ln_idx + 1] if ln_idx >= 0 else [],
+        ))
+
+    # ── Missing phone numbers ─────────────────────────────────────────────────
+    for phone in l4.missing_phones[:5]:
+        fixes.append(ActionableFix(
+            dimension="D4",
+            severity="major",
+            description=f"Phone number from PDF missing in SGML: '{phone}'",
+            line_number=fallback_line + 1,
+            line_content=lines[fallback_line].strip()[:120] if fallback_line < len(lines) else "",
+            context_before=_context(lines, fallback_line),
+            suggested_fix=(
+                f"Phone number '{phone}' appears in source PDF but is absent from SGML.\n\n"
+                f"Add to the contact information section:\n  {phone}"
+            ),
+            pdf_evidence=f'Source PDF phone: "{phone}"',
+            pdf_page=0,
+            confidence="high",
+            auto_fixable=False,
+            highlight_lines=[],
+        ))
+
+    # ── Missing URLs / hyperlinks ─────────────────────────────────────────────
+    for url in l4.missing_urls[:8]:
+        # Try to find a nearby line via domain name
+        domain_part = re.sub(r"https?://|www\.", "", url).split("/")[0]
+        match_lines = _find_text_in_sgml(lines, domain_part[:30]) if len(domain_part) > 5 else []
+        ln_idx = match_lines[0] if match_lines else fallback_line
+
+        fixes.append(ActionableFix(
+            dimension="D4",
+            severity="major",
+            description=f"Hyperlink/URL from PDF missing in SGML: '{url[:80]}'",
+            line_number=ln_idx + 1,
+            line_content=lines[ln_idx].strip()[:120] if ln_idx < len(lines) else "",
+            context_before=_context(lines, ln_idx),
+            suggested_fix=(
+                f"URL '{url}' is present in the source PDF (either as visible text or "
+                f"as a hyperlink annotation) but is absent from the SGML.\n\n"
+                f"If this is an external reference, add using appropriate SGML markup:\n"
+                f'  <XREF HREF="{url}">{url}</XREF>'
+            ),
+            pdf_evidence=f'Source PDF URL: "{url}"',
+            pdf_page=0,
+            confidence="high",
+            auto_fixable=False,
+            highlight_lines=[ln_idx + 1] if ln_idx >= 0 else [],
+        ))
+
+    # ── Missing postal codes ──────────────────────────────────────────────────
+    for postal in l4.missing_postal_codes[:5]:
+        fixes.append(ActionableFix(
+            dimension="D4",
+            severity="minor",
+            description=f"Canadian postal code from PDF missing in SGML: '{postal}'",
+            line_number=fallback_line + 1,
+            line_content=lines[fallback_line].strip()[:120] if fallback_line < len(lines) else "",
+            context_before=_context(lines, fallback_line),
+            suggested_fix=(
+                f"Postal code '{postal}' from the source PDF is absent from the SGML.\n"
+                f"Verify the address block and add the postal code."
+            ),
+            pdf_evidence=f'Source PDF postal code: "{postal}"',
+            pdf_page=0,
+            confidence="high",
+            auto_fixable=False,
+            highlight_lines=[],
+        ))
+
+    # ── Extra items in SGML (not in PDF — possible fabrication) ──────────────
+    extra_items = (
+        [(e, "email") for e in l4.extra_emails[:3]] +
+        [(p, "phone") for p in l4.extra_phones[:3]] +
+        [(u[:60], "URL") for u in l4.extra_urls[:3]]
+    )
+    for item_val, item_type in extra_items:
+        match_lines = _find_text_in_sgml(lines, item_val[:30])
+        ln_idx = match_lines[0] if match_lines else fallback_line
+        fixes.append(ActionableFix(
+            dimension="D4",
+            severity="minor",
+            description=(
+                f"SGML contains {item_type} NOT present in source PDF: '{item_val}' "
+                f"— possible copy-paste error or fabrication."
+            ),
+            line_number=ln_idx + 1,
+            line_content=lines[ln_idx].strip()[:120] if ln_idx < len(lines) else "",
+            context_before=_context(lines, ln_idx),
+            suggested_fix=(
+                f"The {item_type} '{item_val}' appears in the SGML but was NOT found "
+                f"in the source PDF.\n\n"
+                f"Verify against the source PDF and remove if it does not appear there."
+            ),
+            pdf_evidence=f"This {item_type} was NOT found in the source PDF text or annotations.",
+            pdf_page=0,
+            confidence="medium",
+            auto_fixable=False,
+            highlight_lines=[ln_idx + 1] if ln_idx >= 0 else [],
+        ))
+
+    return fixes
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -724,8 +1067,30 @@ def generate_fixes(
     if l4_result.missing_paragraphs:
         all_fixes.extend(_fixes_d3(lines, l4_result))
 
-    # D4: completeness
+    # D3-d: Truncated paragraphs (leading text deleted)
+    if l4_result.truncated_paragraphs:
+        all_fixes.extend(_fixes_d3_truncated(lines, l4_result))
+
+    # D3-e: Inline word mutations (paragraphs present but changed)
+    if l4_result.inline_changed_paragraphs:
+        all_fixes.extend(_fixes_d3_mutations(lines, l4_result))
+
+    # D3-f: Short lines missing
+    if l4_result.missing_short_lines:
+        all_fixes.extend(_fixes_d3_short_lines(lines, l4_result))
+
+    # D4: completeness (table count, image, footnote etc.)
     all_fixes.extend(_fixes_d4(lines, l4_result))
+
+    # D4-g/h: Contact details — emails, phones, URLs, postal codes
+    _has_contact_issues = (
+        l4_result.missing_emails or l4_result.extra_emails or
+        l4_result.missing_phones or l4_result.extra_phones or
+        l4_result.missing_urls or l4_result.extra_urls or
+        l4_result.missing_postal_codes
+    )
+    if _has_contact_issues:
+        all_fixes.extend(_fixes_contact_details(lines, l4_result))
 
     # Sort: severity first, then dimension, then located fixes before unlocated
     all_fixes.sort(key=lambda f: (

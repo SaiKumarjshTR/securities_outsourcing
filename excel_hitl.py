@@ -201,11 +201,15 @@ def _load_past_decisions() -> list[dict]:
 
 
 # ── Page config ───────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Excel → SGML HITL Review",
-    page_icon="📊",
-    layout="wide",
-)
+# Guard: validator_app.py owns set_page_config when hosting both review modes.
+# pages/3_Excel_HITL_Review.py (converter) exec()s without _SKIP_PAGE_CONFIG,
+# so this runs normally in that context.
+if not globals().get("_SKIP_PAGE_CONFIG"):
+    st.set_page_config(
+        page_title="Excel → SGML HITL Review",
+        page_icon="📊",
+        layout="wide",
+    )
 
 st.title("📊 Excel → SGML HITL Review")
 st.caption(
@@ -238,11 +242,35 @@ with st.sidebar:
             f'<span style="color:#0369a1">{_auto_name}</span></div>',
             unsafe_allow_html=True,
         )
+        sgm_upload  = None
+        xlsx_upload = None
     else:
-        st.warning("No pipeline output loaded.\nRun a conversion on the main page first.")
-
-    sgm_upload  = None
-    xlsx_upload = None
+        st.markdown(
+            '<div style="background:#fefce8;border:1px solid #fde047;border-radius:6px;'
+            'padding:8px 10px;font-size:0.82em;color:#713f12;margin-bottom:8px">'
+            '<b>📤 Manual Upload Mode</b><br>'
+            'Upload your SGML file and optionally the source Excel.</div>',
+            unsafe_allow_html=True,
+        )
+        sgm_upload = st.file_uploader(
+            "① Upload SGML file",
+            type=["sgm", "sgml", "xml", "txt"],
+            help="The .sgm file to validate",
+            key="excel_sgml_upload",
+        )
+        xlsx_upload = st.file_uploader(
+            "② Upload Excel file (optional)",
+            type=["xlsx", "xls"],
+            help="Source Excel file for L1 source comparison",
+            key="excel_xlsx_upload",
+        )
+        st.markdown("---")
+        if sgm_upload:
+            st.markdown(f"✅ SGML: `{sgm_upload.name}`")
+        if xlsx_upload:
+            st.markdown(f"✅ Excel: `{xlsx_upload.name}`")
+        if not sgm_upload:
+            st.info("Upload an SGML file above to begin validation.")
 
     st.markdown("---")
     if st.session_state.report is not None:
@@ -251,7 +279,7 @@ with st.sidebar:
 
 # ── Resolve SGML source (upload > auto-loaded) ───────────────────────────────
 if sgm_upload is not None:
-    _resolved_sgml = sgm_upload.read().decode("utf-8", errors="replace")
+    _resolved_sgml = sgm_upload.getvalue().decode("utf-8", errors="replace")
     _resolved_name = sgm_upload.name
 elif _auto_sgml:
     _resolved_sgml = _auto_sgml
@@ -284,7 +312,7 @@ if _need_run:
         xlsx_path: Optional[Path] = None
         if xlsx_upload:
             _xl_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-            _xl_tmp.write(xlsx_upload.read())
+            _xl_tmp.write(xlsx_upload.getvalue())
             _xl_tmp.close()
             xlsx_path = Path(_xl_tmp.name)
         elif _auto_xlsx_bytes:
@@ -445,16 +473,145 @@ with col_sgml:
         unsafe_allow_html=True,
     )
 
-    # Direct editor — edit here and Save/Download immediately
+    # ── postMessage bridge: editor iframe → Streamlit textarea ────────────
+    st.markdown("**✏️ Edit SGML**", unsafe_allow_html=True)
+    _cmp.html("""<script>
+(function(){
+  var pw=window.parent;
+  if(pw._sgmlBridgeExcel)return;
+  pw._sgmlBridgeExcel=true;
+  pw.addEventListener('message',function(e){
+    if(!e.data||e.data.type!=='excel_sgml_editor_update')return;
+    var val=e.data.value;
+    var ta=pw.document.querySelector('textarea[aria-label="excel_sgml_editor_backing"]');
+    if(!ta){
+      var all=pw.document.querySelectorAll('textarea');
+      var best=0;
+      for(var i=0;i<all.length;i++){
+        var v=all[i].value||'';
+        if(v.indexOf('<')>=0&&v.length>best){best=v.length;ta=all[i];}
+      }
+    }
+    if(!ta)return;
+    var setter=Object.getOwnPropertyDescriptor(
+      pw.HTMLTextAreaElement.prototype,'value').set;
+    setter.call(ta,val);
+    ta.dispatchEvent(new pw.Event('input',{bubbles:true}));
+  });
+})();
+</script>""", height=1, scrolling=False)
+
+    # ── Self-contained editor: gutter + textarea in ONE iframe ────────────
+    _n_lines = current_sgml.count('\n') + 1
+    _escaped  = html.escape(current_sgml)
+    _editor_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;overflow:hidden;
+  font-family:'Courier New',monospace;font-size:13px}}
+.bar{{display:flex;align-items:center;gap:8px;padding:3px 8px;
+  background:#f1f5f9;border:1px solid #d1d5db;
+  border-radius:4px 4px 0 0;font-size:11px;color:#475569;white-space:nowrap;
+  flex-shrink:0}}
+.bar b{{color:#1e293b}}
+#gtl{{width:55px;padding:1px 4px;border:1px solid #cbd5e1;border-radius:3px;
+  font-family:inherit;font-size:11px}}
+.btn{{padding:2px 10px;border-radius:3px;border:1px solid #94a3b8;
+  background:#fff;cursor:pointer;font-size:11px;color:#334155}}
+.btn:hover{{background:#e2e8f0}}
+.abtn{{background:#2563eb;color:#fff;border-color:#1d4ed8;font-weight:600}}
+.abtn:hover{{background:#1d4ed8}}
+#msg{{color:#16a34a;font-style:italic;font-size:10px}}
+.wrap{{display:flex;flex:1;border:1px solid #d1d5db;border-top:none;
+  border-radius:0 0 4px 4px;overflow:hidden;height:430px}}
+#gutter{{background:#f8fafc;color:#94a3b8;text-align:right;
+  padding:8px 6px 8px 4px;border-right:2px solid #e2e8f0;
+  overflow:hidden;user-select:none;white-space:pre;
+  line-height:1.5;font-size:13px;min-width:52px;flex-shrink:0}}
+#ed{{flex:1;padding:8px;border:none;outline:none;resize:none;
+  font-family:'Courier New',monospace;font-size:13px;line-height:1.5;
+  overflow-y:scroll;white-space:pre;tab-size:2;color:#1a1a1a;background:#fff}}
+</style></head><body style="display:flex;flex-direction:column;height:100%">
+<div class="bar">
+  Lines:&nbsp;<b id="lc">{_n_lines}</b>&nbsp;│&nbsp;Go&nbsp;to&nbsp;line:
+  <input id="gtl" type="number" min="1" max="{_n_lines}">
+  <button class="btn" id="gob">Go</button>
+  &nbsp;│&nbsp;
+  <button class="abtn btn" id="applyb">✓&nbsp;Apply&nbsp;Changes</button>
+  &nbsp;<span id="msg"></span>
+</div>
+<div class="wrap">
+  <div id="gutter"></div>
+  <textarea id="ed" spellcheck="false">{_escaped}</textarea>
+</div>
+<script>
+var ed=document.getElementById('ed');
+var g=document.getElementById('gutter');
+var lc=document.getElementById('lc');
+var msg=document.getElementById('msg');
+
+function buildGutter(n){{
+  var a=[];
+  for(var i=1;i<=n;i++) a.push(('    '+i).slice(-4));
+  return a.join('\\n');
+}}
+
+function syncGutter(){{
+  var n=ed.value.split('\\n').length;
+  if(parseInt(lc.textContent)!==n){{
+    lc.textContent=n;
+    g.textContent=buildGutter(n);
+  }}
+  g.scrollTop=ed.scrollTop;
+}}
+
+g.textContent=buildGutter({_n_lines});
+
+ed.addEventListener('scroll', function(){{ g.scrollTop=ed.scrollTop; }}, {{passive:true}});
+ed.addEventListener('input',  syncGutter);
+
+function goToLine(){{
+  var n=parseInt(document.getElementById('gtl').value);
+  if(!isFinite(n)||n<1) return;
+  var lines=ed.value.split('\\n');
+  if(n>lines.length) n=lines.length;
+  var lh=parseFloat(getComputedStyle(ed).lineHeight)||20;
+  var visLines=Math.floor(ed.clientHeight/lh);
+  ed.scrollTop=Math.max(0,(n-1-Math.floor(visLines/2))*lh);
+  g.scrollTop=ed.scrollTop;
+  var pos=0;
+  for(var i=0;i<n-1;i++) pos+=lines[i].length+1;
+  ed.focus();
+  ed.setSelectionRange(pos, pos+(lines[n-1]||'').length);
+}}
+
+document.getElementById('gob').addEventListener('click', goToLine);
+document.getElementById('gtl').addEventListener('keydown', function(e){{
+  if(e.key==='Enter') goToLine();
+}});
+
+document.getElementById('applyb').addEventListener('click', function(){{
+  window.parent.postMessage({{type:'excel_sgml_editor_update', value:ed.value}}, '*');
+  msg.textContent='✓ Applied — now Save or Download';
+  setTimeout(function(){{ msg.textContent=''; }}, 5000);
+}});
+</script></body></html>"""
+
+    _cmp.html(_editor_html, height=468, scrolling=False)
+
+    # Hide the backing textarea — JS bridge target only, not for users
     st.markdown(
-        "**Edit SGML** <small style='color:#888;font-size:0.8em'>"
-        "(edit directly below, then Save or Download)</small>",
+        "<style>[data-testid='stTextAreaRootElement']"
+        ":has(textarea[aria-label='excel_sgml_editor_backing'])"
+        "{display:none!important}</style>",
         unsafe_allow_html=True,
     )
+
+    # ── Backing textarea (hidden — aria-label used by the JS bridge) ──────
     edited = st.text_area(
-        label="Edit SGML",
+        label="excel_sgml_editor_backing",
         value=current_sgml,
-        height=420,
+        height=1,
         key="excel_sgml_editor",
         label_visibility="collapsed",
     )

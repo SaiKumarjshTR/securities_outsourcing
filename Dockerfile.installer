@@ -1,0 +1,286 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dockerfile.installer
+#
+# ABBYY FRE12 installer-based Docker build (Ubuntu / official method)
+#
+# This is ABBYY's recommended approach:
+#   https://docs.abbyy.com/fine-reader/engine/distribution/distribution-linux/
+#   running-abbyy-finereader-engine-12-inside-a-docker-container-2
+#
+# Key advantage over Dockerfile (bundle-copy approach):
+#   • Uses ABBYY's own activatefre.sh to configure LicensingSettings.xml at
+#     BUILD TIME when SERVICE_ADDRESS is given — no runtime XML patching needed.
+#   • Cleaner: installer handles all path setup, permissions and config.
+#   • Supports two modes:
+#       Mode A — Hard-coded LS address (build-time, immutable image)
+#                Pass: --build-arg SERVICE_ADDRESS=<ip-or-hostname>
+#       Mode B — Runtime-configurable LS address (set ABBYY_LS_HOST env var)
+#                Pass no SERVICE_ADDRESS — docker_start.sh patches at startup
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# HOW TO GET THE FRE*.sh INSTALLER
+# ──────────────────────────────────────────────────────────────────────────────
+# Option 1 — ABBYY trial portal (recommended):
+#   1. Go to https://support.abbyy.com/hc/en-us/p/FineReader-Engine-Trial
+#   2. Log in with your ABBYY account (saikumar.bhukya@thomsonreuters.com)
+#   3. Download "FineReader Engine 12 for Linux" → save as FRE12.sh
+#   4. Place FRE12.sh in /home/securities_outsourcing/ (same dir as this file)
+#
+# Option 2 — Reconstruct from existing bundle:
+#   bash scripts/create_fre_bundle_installer.sh
+#   This packages abbyy_bundle/ into FRE_bundle.sh with the same CLI interface.
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# HOW TO GET THE LICENSE PASSWORD
+# ──────────────────────────────────────────────────────────────────────────────
+# The license password is tied to the .ABBYY.ActivationToken file.
+# Ask dennis.lappert@abbyy.com or larysa.lototska@abbyy.com:
+#   "Please provide the password for license SWAT-1241-1007-4471-4083-6499"
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# BUILD USAGE
+# ──────────────────────────────────────────────────────────────────────────────
+# Mode A — Fixed LS address baked into image (best for Plexus):
+#   docker build -f Dockerfile.installer \
+#     --build-arg SERVICE_ADDRESS=sgml-abbyy-ls.default.svc.cluster.local \
+#     --build-arg TR_JFROG_USERNAME=C303180 \
+#     --build-arg TR_JFROG_TOKEN=<token> \
+#     -t sgml-pipeline-prod:0.0.22-installer .
+#
+# Mode B — Dynamic LS (set ABBYY_LS_HOST at runtime):
+#   docker build -f Dockerfile.installer \
+#     --build-arg TR_JFROG_USERNAME=C303180 \
+#     --build-arg TR_JFROG_TOKEN=<token> \
+#     -t sgml-pipeline-prod:0.0.22-installer .
+#   docker run -e ABBYY_LS_HOST=10.x.x.x sgml-pipeline-prod:0.0.22-installer
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 1 — ABBYY installer / configurator
+# Uses ubuntu:noble to match ABBYY's official recommended base image.
+# Runs activatefre.sh to:
+#   (a) Write LicensingSettings.xml with correct ServerAddress
+#   (b) Set up all file permissions and paths
+# ══════════════════════════════════════════════════════════════════════════════
+FROM ubuntu:noble AS abbyy_setup
+
+# Dependencies for activatefre.sh (bash, coreutils, getopt)
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    apt-get install --no-install-recommends -y \
+        bash \
+        coreutils \
+        util-linux \
+        ca-certificates \
+        libc6 \
+        libglib2.0-0 \
+        libgcc-s1 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Build arguments ───────────────────────────────────────────────────────────
+# SERVICE_ADDRESS: External LicensingService host:port (or host, port defaults
+#   to 3023). Set at build time for Mode A (hard-coded address).
+#   Leave empty for Mode B (runtime ABBYY_LS_HOST env var).
+ARG SERVICE_ADDRESS=""
+ARG LICENSE_FILE="SWAT12411007447140836499.ABBYY.ActivationToken"
+ARG LICENSE_PASSWORD=""
+
+# ── Option 1: FRE installer from ABBYY portal ─────────────────────────────────
+# If FRE12.sh exists in the build context, run it as ABBYY recommends.
+# Comment out the bundle COPY lines below if using this method.
+#
+# COPY FRE12.sh /tmp/FRE12.sh
+# COPY abbyy_bundle/var_lib_abbyy/ABBYY/SDK/12/Licenses/${LICENSE_FILE} /tmp/${LICENSE_FILE}
+# RUN chmod +x /tmp/FRE12.sh
+# RUN if [ -n "$SERVICE_ADDRESS" ]; then \
+#         /tmp/FRE12.sh -- \
+#             --install-dir /opt/ABBYY/FREngine12 \
+#             --service-address "$SERVICE_ADDRESS" \
+#             --skip-local-service-installation \
+#             --skip-local-license-activation; \
+#     elif [ -n "$LICENSE_PASSWORD" ]; then \
+#         /tmp/FRE12.sh -- \
+#             --install-dir /opt/ABBYY/FREngine12 \
+#             --license-path "/tmp/${LICENSE_FILE}" \
+#             --license-password "$LICENSE_PASSWORD" \
+#             --skip-local-service-installation \
+#             --developer-install; \
+#     else \
+#         echo "ERROR: Provide SERVICE_ADDRESS or (LICENSE_FILE + LICENSE_PASSWORD)" && exit 1; \
+#     fi
+
+# ── Option 2: Bundle approach + activatefre.sh config (no FRE12.sh needed) ───
+# This is equivalent to running the installer: copies all FRE12 files and then
+# runs activatefre.sh to configure LicensingSettings.xml properly.
+
+# Copy the full FRE12 distribution (Bin, Data, Samples, Scripts, etc.)
+COPY abbyy_bundle/FREngine12 /opt/ABBYY/FREngine12
+
+# Set up LicensingService and its libraries
+RUN mkdir -p \
+        /usr/local/bin/ABBYY/SDK/12/Licensing \
+        /usr/local/lib/ABBYY/SDK/12/Licensing \
+        /var/lib/ABBYY/SDK/12/Licenses
+
+COPY abbyy_bundle/LicensingService /usr/local/bin/ABBYY/SDK/12/Licensing/LicensingService
+COPY abbyy_bundle/usr_local_lib_abbyy/ /usr/local/lib/ABBYY/
+RUN chmod +x /usr/local/bin/ABBYY/SDK/12/Licensing/LicensingService
+
+# Copy license tokens
+COPY abbyy_bundle/var_lib_abbyy/ABBYY/ /var/lib/ABBYY/
+RUN chmod -R 777 /var/lib/ABBYY/
+
+# ── Run activatefre.sh in silent mode ─────────────────────────────────────────
+# This is the key step — runs ABBYY's own setup script to:
+#   • Write LicensingSettings.xml in BOTH:
+#       /opt/ABBYY/FREngine12/Bin/LicensingSettings.xml
+#       /opt/ABBYY/FREngine12/CommonBin/Licensing/LicensingSettings.xml
+#   • If SERVICE_ADDRESS provided → ServerAddress="$SERVICE_ADDRESS" (Mode A)
+#   • If no SERVICE_ADDRESS → ServerAddress="127.0.0.1" (Mode B, runtime patch)
+#   • --skip-local-service-installation → no systemd setup (correct for Docker)
+#   • Sets correct permissions on /var/lib/ABBYY/
+RUN chmod +x /opt/ABBYY/FREngine12/activatefre.sh \
+             /opt/ABBYY/FREngine12/Scripts/*.sh && \
+    export RootScriptLaunched=1 && \
+    if [ -n "$SERVICE_ADDRESS" ]; then \
+        echo "[installer] Configuring remote LicensingService at: $SERVICE_ADDRESS" && \
+        /opt/ABBYY/FREngine12/activatefre.sh -- \
+            --install-dir /opt/ABBYY/FREngine12 \
+            --service-address "$SERVICE_ADDRESS" \
+            --skip-local-service-installation \
+            --skip-local-license-activation; \
+    elif [ -n "$LICENSE_PASSWORD" ]; then \
+        echo "[installer] Configuring local LicensingService (online license)" && \
+        /opt/ABBYY/FREngine12/activatefre.sh -- \
+            --install-dir /opt/ABBYY/FREngine12 \
+            --license-path "/var/lib/ABBYY/SDK/12/Licenses/${LICENSE_FILE}" \
+            --license-password "$LICENSE_PASSWORD" \
+            --skip-local-service-installation; \
+    else \
+        echo "[installer] No SERVICE_ADDRESS or LICENSE_PASSWORD — using default (127.0.0.1)" && \
+        /opt/ABBYY/FREngine12/activatefre.sh -- \
+            --install-dir /opt/ABBYY/FREngine12 \
+            --skip-local-service-installation \
+            --skip-local-license-activation; \
+    fi
+
+# Show the resulting LicensingSettings.xml for build-log verification
+RUN echo "[installer] === LicensingSettings.xml after setup ===" && \
+    cat /opt/ABBYY/FREngine12/Bin/LicensingSettings.xml && \
+    echo "[installer] === CommonBin/Licensing ===" && \
+    cat /opt/ABBYY/FREngine12/CommonBin/Licensing/LicensingSettings.xml 2>/dev/null || true
+
+# Remove developer-only library (not needed at runtime)
+RUN rm -f /opt/ABBYY/FREngine12/Bin/libProtection.Developer.so
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stage 2 — Application runtime
+# Uses python:3.12-slim to host the Streamlit app + ABBYY runtime.
+# Copies only what was configured/installed in Stage 1.
+# ══════════════════════════════════════════════════════════════════════════════
+FROM python:3.12-slim
+
+LABEL maintainer="Thomson Reuters — Securities SGML Team"
+LABEL version="0.0.22-installer"
+LABEL description="SGML Pipeline — installer-based ABBYY setup (activatefre.sh)"
+
+# ── System deps — per ABBYY official Docker docs ─────────────────────────────
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    apt-get install --no-install-recommends -y \
+        ca-certificates \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender-dev \
+        libgomp1 \
+        libstdc++6 \
+        libx11-6 \
+        libfreetype6 \
+        libice6 \
+        locales \
+        procps \
+        libusb-1.0-0 \
+        iproute2 \
+        curl \
+    && locale-gen en_US.UTF-8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Build arguments ───────────────────────────────────────────────────────────
+ARG TR_JFROG_USERNAME
+ARG TR_JFROG_TOKEN
+
+WORKDIR /app
+
+# ── Python dependencies ───────────────────────────────────────────────────────
+COPY requirements.txt .
+RUN if [ -n "$TR_JFROG_USERNAME" ] && [ -n "$TR_JFROG_TOKEN" ]; then \
+        pip3 install --no-cache-dir --timeout 300 --retries 10 -r requirements.txt \
+            --extra-index-url "https://${TR_JFROG_USERNAME}:${TR_JFROG_TOKEN}@tr1.jfrog.io/tr1/api/pypi/pypi-local/simple"; \
+    else \
+        pip3 install --no-cache-dir --timeout 300 --retries 10 -r requirements.txt; \
+    fi
+
+# ── Application code ──────────────────────────────────────────────────────────
+COPY app/             ./app/
+COPY pipeline/        ./pipeline/
+COPY streamlit_app.py  ./streamlit_app.py
+COPY abbyy_convert.py  ./abbyy_convert.py
+COPY .streamlit/       ./.streamlit/
+COPY data/             /app/data/
+RUN mkdir -p /app/data/vendor_sgms /tmp/sgml_pipeline
+
+# ── TR/Zscaler CA certs ───────────────────────────────────────────────────────
+COPY abbyy_bundle/tr_certs/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
+# ── CodeMeter (license daemon) ────────────────────────────────────────────────
+COPY abbyy_bundle/codemeter.deb /tmp/codemeter.deb
+RUN dpkg -i --force-depends /tmp/codemeter.deb && rm /tmp/codemeter.deb
+
+# ── Copy ABBYY runtime from Stage 1 (activatefre.sh-configured) ──────────────
+# These paths were configured by activatefre.sh in Stage 1.
+# LicensingSettings.xml already has the correct ServerAddress.
+COPY --from=abbyy_setup /opt/ABBYY/FREngine12 /opt/ABBYY/FREngine12
+COPY --from=abbyy_setup /usr/local/bin/ABBYY/SDK/12/Licensing /usr/local/bin/ABBYY/SDK/12/Licensing/
+COPY --from=abbyy_setup /usr/local/lib/ABBYY /usr/local/lib/ABBYY/
+COPY --from=abbyy_setup /var/lib/ABBYY /var/lib/ABBYY/
+
+# Ensure correct permissions
+RUN chmod +x \
+        /opt/ABBYY/FREngine12/Samples/CommandLineInterface/CommandLineInterface \
+        /opt/ABBYY/FREngine12/Bin/FREngineProcessor \
+        /opt/ABBYY/FREngine12/Bin/LicenseManager.Console \
+        /usr/local/bin/ABBYY/SDK/12/Licensing/LicensingService \
+    && chmod -R 777 /var/lib/ABBYY/ \
+    && find /opt/ABBYY/FREngine12 -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+
+# ── Startup script ────────────────────────────────────────────────────────────
+# docker_start.sh still patches LicensingSettings.xml at runtime IF ABBYY_LS_HOST
+# is set (Mode B). In Mode A (SERVICE_ADDRESS baked in), the patch is a no-op
+# because the correct ServerAddress is already set from Stage 1.
+COPY scripts/docker_start.sh /app/docker_start.sh
+RUN chmod +x /app/docker_start.sh
+
+# ── Runtime environment ───────────────────────────────────────────────────────
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8501 \
+    HOST=0.0.0.0 \
+    TEMP_DIR=/tmp/sgml_pipeline \
+    ABBYY_CLI=/opt/ABBYY/FREngine12/Samples/CommandLineInterface/CommandLineInterface \
+    ABBYY_LIB=/opt/ABBYY/FREngine12/Bin \
+    LD_LIBRARY_PATH=/opt/ABBYY/FREngine12/Bin:/usr/local/lib/ABBYY/SDK/12/Licensing \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8
+
+# ── CRITICAL: shm_size must be ≥ 1GB in Kubernetes ───────────────────────────
+# In Plexus pod spec add:
+#   volumes: [{name: dshm, emptyDir: {medium: Memory, sizeLimit: 1Gi}}]
+#   volumeMounts: [{mountPath: /dev/shm, name: dshm}]
+
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=5 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')" || exit 1
+
+EXPOSE 8501
+
+CMD ["/app/docker_start.sh"]
