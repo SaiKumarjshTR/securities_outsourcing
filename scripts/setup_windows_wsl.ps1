@@ -161,7 +161,7 @@ if (-not $BundlePath) {
     if (Test-Path $LocalSetup) {
         Write-Warn "No bundle found — attempting direct install from repo in WSL..."
         # Convert Windows path to WSL path
-        $WslRepoPath = wsl -- wslpath "'$REPO_DIR'" 2>&1
+        $WslRepoPath = & wsl -- wslpath ($REPO_DIR -replace '\\', '/')
         $BundlePath = "REPO:$REPO_DIR"
     } else {
         Write-Error2 "Cannot find bundle or repo. Download sgml-pipeline-bundle.tar.gz and place next to this script."
@@ -170,9 +170,11 @@ if (-not $BundlePath) {
 
 if ($BundlePath -notlike "REPO:*") {
     # Copy bundle into WSL
-    Write-Host "  Copying bundle to WSL ($([int]($(Get-Item $BundlePath).Length / 1MB))MB)..." -ForegroundColor Gray
+    $bundleSizeMB = [int]((Get-Item $BundlePath).Length / 1048576)
+    Write-Host "  Copying bundle to WSL (~${bundleSizeMB}MB)..." -ForegroundColor Gray
     $WslTmp = "/tmp/sgml-pipeline-bundle.tar.gz"
-    wsl -- cp (wsl -- wslpath "'$BundlePath'") $WslTmp
+    $BundleWslPath = & wsl -- wslpath ($BundlePath -replace '\\\\', '/' -replace '\\', '/')
+    wsl -d Ubuntu -- cp $BundleWslPath $WslTmp
     
     # Extract and install inside WSL
     wsl -- bash -c "
@@ -187,9 +189,8 @@ if ($BundlePath -notlike "REPO:*") {
 } else {
     # Use repo directly
     $RepoDir = $BundlePath.Substring(5)
-    $WslRepo = (wsl -- wslpath "'$RepoDir'") 2>&1
-    wsl -- bash -c "sudo bash '$WslRepo/scripts/setup_local_ubuntu.sh'"
-}
+    $WslRepo = & wsl -d Ubuntu -- wslpath ($RepoDir -replace '\\', '/')
+    wsl -d Ubuntu -- bash -c "sudo bash '$WslRepo/scripts/setup_local_ubuntu.sh'"}
 
 Write-Ok "SGML Pipeline installed in WSL"
 
