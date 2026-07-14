@@ -193,8 +193,47 @@ if ($BundlePath -notlike "REPO:*") {
 
 Write-Ok "SGML Pipeline installed in WSL"
 
+# ── Configure WSL2 networking (mirrored mode) ────────────────────────────────
+Write-Step "5a/7  Configuring WSL2 networking..."
+$wslConfigPath = "$env:USERPROFILE\.wslconfig"
+$wslConfigContent = @"
+[wsl2]
+# Mirrored networking: WSL2 shares the Windows network stack.
+# localhost in WSL2 = localhost in Windows — no port forwarding needed.
+# Required for the SGML Pipeline browser to reach the app.
+networkingMode=mirrored
+localhostForwarding=true
+"@
+Set-Content -Path $wslConfigPath -Value $wslConfigContent -Encoding UTF8
+Write-Ok "WSL2 networking configured (mirrored mode) at $wslConfigPath"
+
+# ── Add Windows Firewall inbound rule for port 8501 ───────────────────────────
+Write-Step "5b/7  Adding Windows Firewall rule for port $APP_PORT..."
+try {
+    # Remove old rule if exists
+    Remove-NetFirewallRule -DisplayName "SGML Pipeline*" -ErrorAction SilentlyContinue
+    # Add new inbound rule allowing localhost→WSL2 traffic on port 8501
+    New-NetFirewallRule `
+        -DisplayName "SGML Pipeline (Streamlit port $APP_PORT)" `
+        -Direction Inbound `
+        -Action Allow `
+        -Protocol TCP `
+        -LocalPort $APP_PORT `
+        -Profile Any `
+        -Description "SGML Pipeline Streamlit app running in WSL2 Ubuntu" | Out-Null
+    Write-Ok "Firewall rule added: allow inbound TCP port $APP_PORT"
+} catch {
+    Write-Warn "Could not add firewall rule: $_ — localhost may not work, use WSL2 IP instead."
+}
+
+# ── Restart WSL2 to apply networking config ───────────────────────────────────
+Write-Host "  Restarting WSL2 to apply networking changes..." -ForegroundColor Gray
+wsl --shutdown 2>&1 | Out-Null
+Start-Sleep -Seconds 3
+Write-Ok "WSL2 restarted with mirrored networking"
+
 # ── Create Windows launcher scripts ───────────────────────────────────────────
-Write-Step "5/7  Creating Windows launchers..."
+Write-Step "5c/7  Creating Windows launchers..."
 
 New-Item -ItemType Directory -Force -Path $WIN_APP_DIR | Out-Null
 
@@ -204,8 +243,8 @@ New-Item -ItemType Directory -Force -Path $WIN_APP_DIR | Out-Null
 title SGML Pipeline
 echo Starting SGML Pipeline...
 echo.
-wsl -- bash -c "sgml-pipeline start > /tmp/sgml-pipeline.log 2>&1 &"
-timeout /t 5 /nobreak > nul
+wsl -d Ubuntu -- bash -c "nohup sgml-pipeline start > /tmp/sgml-pipeline.log 2>&1 & sleep 2"
+timeout /t 8 /nobreak > nul
 start "" "http://localhost:$APP_PORT"
 echo App running at http://localhost:$APP_PORT
 echo Close this window to keep the app running.
@@ -217,7 +256,7 @@ pause
 @echo off
 title SGML Pipeline - Stop
 echo Stopping SGML Pipeline...
-wsl -- bash -c "sgml-pipeline stop"
+wsl -d Ubuntu -- bash -c "sgml-pipeline stop"
 echo Done.
 pause
 "@ | Set-Content "$WIN_APP_DIR\stop.bat" -Encoding ASCII

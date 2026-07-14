@@ -94,12 +94,22 @@ set /a i=0
     echo  App is ready!
 
 :open_browser
-    :: Open browser
+    :: Get WSL2 IP as fallback in case localhost forwarding not yet active
+    for /f "tokens=*" %%i in ('wsl -d Ubuntu -- bash -c "ip -4 addr show eth0 2>/dev/null | grep inet | awk '{print $2}' | cut -d/ -f1"') do set WSL_IP=%%i
+
+    :: Open browser — localhost works with mirrored networking (.wslconfig)
     start "" "%APP_URL%"
     echo.
     echo ============================================================
-    echo   SGML Pipeline is running at %APP_URL%
+    echo   SGML Pipeline is running
+    echo   Primary URL : %APP_URL%
+    if defined WSL_IP echo   Fallback URL: http://%WSL_IP%:%APP_PORT%
     echo ============================================================
+    echo.
+    echo  If the browser shows "can't reach this page":
+    echo    1. Wait 10 more seconds and refresh (app still starting)
+    if defined WSL_IP echo    2. Try the Fallback URL above in your browser
+    echo    3. Run setup_windows_wsl.ps1 as Admin to fix networking
     echo.
     echo  Tips:
     echo    - Upload a PDF file in the browser
