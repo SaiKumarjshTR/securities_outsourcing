@@ -40,18 +40,19 @@ if %ERRORLEVEL% neq 0 (
 )
 
 :: ── Check if SGML Pipeline is installed in WSL ───────────────────────────────
-wsl -- command -v sgml-pipeline >nul 2>&1
+wsl -d Ubuntu -- bash -c "test -f /usr/local/bin/sgml-pipeline" >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo  ERROR: sgml-pipeline not found in WSL.
+    echo  ERROR: sgml-pipeline not found in WSL Ubuntu.
     echo.
     echo  Please run setup_windows_wsl.ps1 as Administrator first.
+    echo  Right-click setup_windows_wsl.ps1 ^> Run with PowerShell
     echo.
     pause
     exit /b 1
 )
 
 :: ── Check if already running ──────────────────────────────────────────────────
-wsl -- pgrep -f "streamlit run" >nul 2>&1
+wsl -d Ubuntu -- pgrep -f "streamlit run" >nul 2>&1
 if %ERRORLEVEL% equ 0 (
     echo  App is already running. Opening browser...
     timeout /t 1 /nobreak >nul
@@ -67,8 +68,9 @@ echo  Starting ABBYY LicensingService and Streamlit app...
 echo  This takes ~10 seconds on first launch.
 echo.
 
-:: Start inside WSL2 in background
-wsl -- bash -c "sgml-pipeline start >> /tmp/sgml-pipeline.log 2>&1 &"
+:: Start inside WSL2 using nohup so Streamlit survives after the WSL session exits.
+:: Without nohup the process gets SIGHUP-killed when the calling shell closes.
+wsl -d Ubuntu -- bash -c "nohup sgml-pipeline start > /tmp/sgml-pipeline.log 2>&1 & sleep 2 && echo 'started' > /tmp/sgml-pipeline.pid"
 
 :: Wait for startup
 echo  Waiting for app to start.
@@ -77,7 +79,7 @@ set /a i=0
     timeout /t 2 /nobreak >nul
     set /a i+=1
     echo  . (%i%0s elapsed)
-    wsl -- curl -sf "http://localhost:%APP_PORT%" >nul 2>&1
+    wsl -d Ubuntu -- curl -sf "http://localhost:%APP_PORT%" >nul 2>&1
     if %ERRORLEVEL% equ 0 goto :ready
     if %i% geq 15 goto :timeout_warn
     goto :wait_loop

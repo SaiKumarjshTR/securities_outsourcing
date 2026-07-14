@@ -144,6 +144,14 @@ ok "Bundle info written"
 step "4/4  Creating archives..."
 
 cd "$TMP"
+# Remove any existing machine-specific ABBYY license tokens before packaging.
+# Business users must activate their own license — our tokens are machine-bound
+# and will NOT work on other machines. Keeping them would only confuse users.
+find "$BUNDLE_NAME/abbyy_bundle/" -name "*.ActivationToken" -delete 2>/dev/null || true
+find "$BUNDLE_NAME/abbyy_bundle/" -name "*.ActivationToken.bak" -delete 2>/dev/null || true
+# Remove Python caches (not needed in distribution)
+find "$BUNDLE_NAME/" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+find "$BUNDLE_NAME/" -name '*.pyc' -delete 2>/dev/null || true
 TARBALL="$DIST_DIR/${BUNDLE_NAME}-${VERSION}.tar.gz"
 echo "  Creating $TARBALL ..."
 tar -czf "$TARBALL" "$BUNDLE_NAME/"

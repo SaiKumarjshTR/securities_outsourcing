@@ -33,8 +33,20 @@
 #   Double-click "SGML Pipeline" on Desktop → browser opens to localhost:8501
 # =============================================================================
 
-#Requires -RunAsAdministrator
-$ErrorActionPreference = "Stop"
+# ── Self-elevate to Administrator if needed ──────────────────────────────────
+# This replaces #Requires -RunAsAdministrator so the window does NOT silently
+# close when run without admin rights — instead it re-launches with UAC prompt.
+if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "Requesting Administrator privileges..." -ForegroundColor Yellow
+    Write-Host "A UAC (User Account Control) prompt will appear — click Yes." -ForegroundColor White
+    Start-Process PowerShell.exe -Verb RunAs `
+        -ArgumentList "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`""
+    exit
+}
+
+# Now running as Administrator
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+$ErrorActionPreference = "Continue"   # Don't silently exit on every error
 
 # ── Config ────────────────────────────────────────────────────────────────────
 $UBUNTU_DISTRO  = "Ubuntu-22.04"
