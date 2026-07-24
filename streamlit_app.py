@@ -137,7 +137,7 @@ if "pipeline_logs" not in st.session_state:
     st.session_state.pipeline_logs = []    # list of (timestamp, level, message)
 if "pipeline_running" not in st.session_state:
     st.session_state.pipeline_running = False
-# Cross-page carry-over — last pipeline run results shared with HITL pages
+# Last pipeline run results
 if "pipeline_result_ready" not in st.session_state:
     st.session_state.pipeline_result_ready = False
 if "last_pdf_name" not in st.session_state:
@@ -760,7 +760,7 @@ else:
             st.session_state.last_val_score      = val_score
             st.session_state.last_val_decision   = val_decision
             st.session_state.pipeline_result_ready = True
-            # Invalidate HITL cached temp-file paths so HITL reloads the new SGML
+            # Clear any stale temp-file cache keys
             for _ck in [k for k in list(st.session_state.keys()) if k.startswith("_hitl_")]:
                 del st.session_state[_ck]
 
@@ -902,7 +902,7 @@ else:
             if os.path.exists(sgm_path):
                 sgml_text = Path(sgm_path).read_text(encoding="utf-8", errors="replace")
 
-                # ── Persist for Excel HITL carry-over ────────────────────────
+                # ── Persist Excel conversion results ──────────────────────────
                 st.session_state.last_excel_sgml_text  = sgml_text
                 st.session_state.last_excel_sgml_name  = f"{excel_doc_name}.sgm"
                 st.session_state.last_excel_xlsx_bytes = uploaded_excel.getvalue()

@@ -2510,7 +2510,11 @@ class CompleteDOCXExtractor:
                 return []
             items = []
             idx = base_index
-            local_seen = doc_seen_texts if doc_seen_texts is not None else set()
+            # FIX-2COL-DEDUP: Use per-table LOCAL set for deduplication.
+            # Using shared doc_seen_texts caused cross-table false deduplication:
+            # bilingual docs (English+French) with repeated contact/signature tables
+            # had their second table's content silently dropped.
+            local_seen: set = set()  # Per-table only
             for row in rows:
                 row_cells = []
                 row_seen = set()
@@ -2528,6 +2532,8 @@ class CompleteDOCXExtractor:
                         if txt_key in local_seen:
                             continue
                         local_seen.add(txt_key)
+                        if doc_seen_texts is not None:
+                            doc_seen_texts.add(txt_key)
                         para_data = self._extract_paragraph(para, idx)
                         items.append({'type': 'paragraph', 'data': para_data})
                         idx += 1
@@ -2552,27 +2558,47 @@ class CompleteDOCXExtractor:
             if (numeric_count / len(col2_texts)) >= 0.6:
                 return []
 
-        # 2-col (non-TOC): extract ALL cells with dedup
+        # 2-col (non-TOC): extract ALL cells column-by-column with per-table dedup
+        # FIX-2COL-DEDUP: Use per-table LOCAL set for dedup (not shared doc_seen_texts).
+        # Column-by-column extraction (col0 first, then col1) preserves reading order.
         items = []
         seen_cell_ids = set()
-        seen_texts = doc_seen_texts if doc_seen_texts is not None else set()
+        seen_texts: set = set()  # Per-table local — NOT doc_seen_texts
         idx = base_index
+
+        # Collect unique cells for each column across all rows
+        col0_cells = []
+        col1_cells = []
         for row in rows:
+            unique = []
+            _seen_row = set()
             for cell in row.cells:
-                cid = id(cell)
-                if cid in seen_cell_ids:
+                if id(cell) not in _seen_row:
+                    _seen_row.add(id(cell))
+                    unique.append(cell)
+            if len(unique) >= 1:
+                col0_cells.append(unique[0])
+            if len(unique) >= 2:
+                col1_cells.append(unique[1])
+
+        # Extract column 0 first, then column 1 (preserves natural reading order)
+        for cell in col0_cells + col1_cells:
+            cid = id(cell)
+            if cid in seen_cell_ids:
+                continue
+            seen_cell_ids.add(cid)
+            for para in cell.paragraphs:
+                if not para.text.strip():
                     continue
-                seen_cell_ids.add(cid)
-                for para in cell.paragraphs:
-                    if not para.text.strip():
-                        continue
-                    txt_key = para.text.strip()[:100].lower()
-                    if txt_key in seen_texts:
-                        continue
-                    seen_texts.add(txt_key)
-                    para_data = self._extract_paragraph(para, idx)
-                    items.append({'type': 'paragraph', 'data': para_data})
-                    idx += 1
+                txt_key = para.text.strip()[:100].lower()
+                if txt_key in seen_texts:
+                    continue
+                seen_texts.add(txt_key)
+                if doc_seen_texts is not None:
+                    doc_seen_texts.add(txt_key)  # update global tracker
+                para_data = self._extract_paragraph(para, idx)
+                items.append({'type': 'paragraph', 'data': para_data})
+                idx += 1
         return items
 
     def _is_layout_table(self, table_data: 'TableData', table_total_idx: int = 999) -> bool:
@@ -6679,6 +6705,10 @@ class SGMLGenerator:
         # Fix #9: Merge false page-break P splits (mid-sentence </P><P>continuation)
         sgml = self._fix_pagebreak_p_splits(sgml)
 
+        # FIX-COMPOUND-LABEL: Restore split compound labels and strip bracket spaces.
+        # LLM sometimes outputs "(i. (1)" for "(i.1)" or adds spaces inside brackets.
+        sgml = self._fix_compound_labels(sgml)
+
         # FIX 1C: Remove spurious </P> that immediately precedes <ITEM> blocks.
         # Pattern: ...intro text</P>\n<P>\n<ITEM>... → ...intro text\n<ITEM>...
         # Vendor keeps the list-introducer sentence open inside the same <P> as the ITEMs.
@@ -6691,6 +6721,37 @@ class SGMLGenerator:
         sgml = self._fix_ocr_item_labels(sgml)
 
         return sgml
+
+    def _fix_compound_labels(self, sgml_lines: List[str]) -> List[str]:
+        """FIX-COMPOUND-LABEL: Repair compound list labels split by the LLM.
+
+        When the LLM receives a paragraph starting with a compound label like "(i.1)"
+        or "(3.1)", it sometimes outputs it as "(i. (1)" or "(3. (1)" — splitting the
+        compound into a roman/letter prefix and a separate parenthesised number.
+
+        This method restores the original compact form:
+          "(i. (1)"  → "(i.1)"
+          "(3. (1)"  → "(3.1)"
+
+        FIX-B1: Applies to ALL SGML lines (no line-type guard) because the LLM can
+        produce split compound labels on any line type (P, ITEM, TI, LINE, etc.).
+        FIX-B2: Also strips accidental spaces added inside brackets:
+          "( a )"  → "(a)"  / "[ a ]" → "[a]"
+        """
+        import re as _re_cl
+        _SPLIT_LABEL_RE = _re_cl.compile(
+            r'\(([a-zA-Z0-9]+)\.\s+\(([a-zA-Z0-9]+)\)',
+        )
+        _OPEN_SPACE_RE  = _re_cl.compile(r'([\(\[])\s+')
+        _CLOSE_SPACE_RE = _re_cl.compile(r'\s+([\)\]])')
+        result = list(sgml_lines)
+        for i, line in enumerate(result):
+            new_line = _SPLIT_LABEL_RE.sub(r'(\1.\2)', line)
+            new_line = _OPEN_SPACE_RE.sub(r'\1', new_line)
+            new_line = _CLOSE_SPACE_RE.sub(r'\1', new_line)
+            if new_line != line:
+                result[i] = new_line
+        return result
 
     def _fix_ti_mdash_spacing(self, sgml_lines: List[str]) -> List[str]:
         """Fix 13A: Add spaces around &mdash; in TI tags when vendor uses spaced format.
