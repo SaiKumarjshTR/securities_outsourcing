@@ -11,7 +11,7 @@ FROM python:3.12-slim
 
 # Metadata
 LABEL maintainer="Thomson Reuters — Securities SGML Team"
-LABEL version="0.0.6"
+LABEL version="0.0.7"
 LABEL description="SGML Pipeline UI — PDF/DOCX to SGML conversion (Streamlit)"  
 
 # ── System dependencies ──────────────────────────────────────────────────────
