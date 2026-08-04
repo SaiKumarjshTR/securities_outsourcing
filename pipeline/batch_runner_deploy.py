@@ -4183,6 +4183,13 @@ STEP 5 — Tie-breaker for AnnualReport (genuinely ambiguous, no strong indicato
 EM: italic regulation names, Act titles within P/ITEM/LINE.
 BOLD: inline bold within P (HasBold paragraphs).
 
+•••••••••••• CRITICAL TEXT FIDELITY ••••••••••••
+Your ONLY job is to apply SGML structural TAGS. NEVER alter the source text.
+• Reproduce ALL numbers, section references, and punctuation EXACTLY as given.
+• NEVER change "14.1.3" to any other value, or "3(2)" to "3 2)", or "(3.1)" to "(3.(1)".
+• NEVER add, remove, or reposition any parenthesis or bracket.
+• NEVER paraphrase, summarise, or omit any word from the source paragraph.
+
 DocType={doc_type_hint}
 
 OUTPUT: ONLY valid JSON array, one object per paragraph:
@@ -6744,11 +6751,15 @@ class SGMLGenerator:
         )
         _OPEN_SPACE_RE  = _re_cl.compile(r'([\(\[])\s+')
         _CLOSE_SPACE_RE = _re_cl.compile(r'\s+([\)\]])')
+        # FIX-B3: LLM drops opening paren from subsection refs: "3(2)" → "3 2)"
+        # Matches digit(s) + space + digit(s) + ")" immediately after a tag close.
+        _MISS_OPEN_RE   = _re_cl.compile(r'(?<=>)(\d{1,3})\s+(\d{1,3})\)')
         result = list(sgml_lines)
         for i, line in enumerate(result):
             new_line = _SPLIT_LABEL_RE.sub(r'(\1.\2)', line)
             new_line = _OPEN_SPACE_RE.sub(r'\1', new_line)
             new_line = _CLOSE_SPACE_RE.sub(r'\1', new_line)
+            new_line = _MISS_OPEN_RE.sub(r'\1(\2)', new_line)
             if new_line != line:
                 result[i] = new_line
         return result
@@ -10149,6 +10160,7 @@ class DeterministicSGMLFixer:
         sgml = self._fix_polident_order(sgml)
         sgml = self._fix_polidoc_attrs(sgml, jurisdiction)
         sgml = self._apply_em_patterns(sgml)
+        sgml = self._fix_premature_block_close(sgml)
         sgml = self._fix_block_nesting(sgml)
         sgml = self._fix_unclosed_blocks(sgml)
         delta = len(sgml) - original_len
@@ -10334,6 +10346,84 @@ class DeterministicSGMLFixer:
         if em_added:
             self._changes.append("Guaranteed EM tagging for NI/MI numbers and email addresses (D2)")
         return ''.join(parts)
+
+    def _fix_premature_block_close(self, sgml: str) -> str:
+        """FIX-BLOCK-EARLY-CLOSE: Reopen BLOCK tags that close too early (only TI inside).
+
+        Pattern: <BLOCKn>...<TI>text</TI></BLOCKn> immediately followed by <P>/<ITEM> content.
+        Vendor expects the BLOCK to wrap all following paragraph content, not just the TI.
+        Repair: remove the premature </BLOCKn> and re-insert it at the next block boundary.
+        """
+        if 'BLOCK' not in sgml:
+            return sgml
+
+        CONTENT_RE  = re.compile(r'^<(?:P|P1|P2|P3|P4|ITEM|LINE|QUOTE|FOOTNOTE)\b')
+        BLOCK_OPEN  = re.compile(r'^<BLOCK(\d+)(?:\s[^>]*)?>$')
+        BLOCK_CLOSE = re.compile(r'^</BLOCK(\d+)>$')
+        SECTION_END = re.compile(r'^</(?:FREEFORM|POLIDOC|APPENDIX|SCHEDULE)>')
+        # Line ending with </TI></BLOCKn> — single-line or tail of multi-line TI
+        EARLY_CLOSE = re.compile(r'^(.*</TI>)</BLOCK(\d+)>\s*$')
+
+        lines  = sgml.split('\n')
+        result = []
+        i = 0
+        changed = False
+
+        while i < len(lines):
+            stripped = lines[i].strip()
+
+            # Detect: line ends with </TI></BLOCKn>
+            m = EARLY_CLOSE.match(stripped)
+            if m:
+                block_level = int(m.group(2))
+                # Look ahead for first non-empty line
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                # Only reopen when next content is P/ITEM (not another BLOCK or section boundary)
+                if j < len(lines) and CONTENT_RE.match(lines[j].strip()):
+                    # Emit the line without the premature close
+                    result.append(lines[i].rstrip().replace(f'</BLOCK{block_level}>', ''))
+                    i += 1
+                    # Collect subsequent lines until block boundary
+                inserted_close = False
+                while i < len(lines):
+                    curr = lines[i].strip()
+                    mb_open  = BLOCK_OPEN.match(curr)
+                    mb_close = BLOCK_CLOSE.match(curr)
+                    if SECTION_END.match(curr):
+                        result.append(f'</BLOCK{block_level}>')
+                        result.append(lines[i])
+                        i += 1
+                        inserted_close = True
+                        changed = True
+                        break
+                    elif mb_open and int(mb_open.group(1)) <= block_level:
+                        result.append(f'</BLOCK{block_level}>')
+                        result.append(lines[i])
+                        i += 1
+                        inserted_close = True
+                        changed = True
+                        break
+                    elif mb_close and int(mb_close.group(1)) <= block_level:
+                        result.append(lines[i])  # keep the original close
+                        i += 1
+                        inserted_close = True
+                        changed = True
+                        break
+                    else:
+                        result.append(lines[i])
+                        i += 1
+                if not inserted_close:
+                    result.append(f'</BLOCK{block_level}>')
+                    changed = True
+
+            result.append(lines[i])
+            i += 1
+
+        if changed:
+            self._changes.append('FIX-BLOCK-EARLY-CLOSE: reopened BLOCK(s) that closed too early after <TI>')
+        return '\n'.join(result)
 
     def _fix_unclosed_blocks(self, sgml: str) -> str:
         """Close any BLOCK tags left open before </FREEFORM> or </POLIDOC>.
