@@ -6747,7 +6747,7 @@ class SGMLGenerator:
         """
         import re as _re_cl
         _SPLIT_LABEL_RE = _re_cl.compile(
-            r'\(([a-zA-Z0-9]+)\.\s+\(([a-zA-Z0-9]+)\)',
+            r'\(([a-zA-Z0-9]+)\.\s*\(([a-zA-Z0-9]+)\)',
         )
         _OPEN_SPACE_RE  = _re_cl.compile(r'([\(\[])\s+')
         _CLOSE_SPACE_RE = _re_cl.compile(r'\s+([\)\]])')
