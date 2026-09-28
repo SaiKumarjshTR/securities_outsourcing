@@ -30,7 +30,8 @@ build/
 !tests/golden/**/*.sgm
 
 # ── Data (large files) — add selectively ─────────────────────────────────────
-data/chroma_db/
+# chroma_db IS tracked (via Git LFS - see .gitattributes) so a fresh clone has
+# a working RAG index (78 rule chunks, 5481 vendor examples) out of the box.
 # Keep vendor_sgms tracked (small SGM files for RAG)
 # data/vendor_sgms/  ← intentionally not ignored
 
