@@ -96,7 +96,7 @@ def is_pipeline_available() -> bool:
     return _pipeline_script_exists()
 
 
-def run_pipeline(docx_bytes: bytes, doc_name: str) -> Dict[str, Any]:
+def run_pipeline(docx_bytes: bytes, doc_name: str, pdf_bytes: bytes = None) -> Dict[str, Any]:
     """
     Convert a DOCX file (supplied as raw bytes) to SGML.
 
@@ -106,6 +106,9 @@ def run_pipeline(docx_bytes: bytes, doc_name: str) -> Dict[str, Any]:
         Raw bytes of the `.docx` file to convert.
     doc_name : str
         The document identifier / stem (e.g. ``"51-737"``).
+    pdf_bytes : bytes, optional
+        Raw bytes of the original source PDF, if any. Written alongside the DOCX
+        so the pipeline's hyperlink-injection step (PATHS['input_pdf']) can find it.
 
     Returns
     -------
@@ -129,6 +132,12 @@ def run_pipeline(docx_bytes: bytes, doc_name: str) -> Dict[str, Any]:
         docx_path = os.path.join(tmp_dir, f"{doc_name}.docx")
         with open(docx_path, "wb") as fh:
             fh.write(docx_bytes)
+
+        # Write the source PDF too (if supplied) so hyperlink injection can find it
+        if pdf_bytes:
+            pdf_path = os.path.join(tmp_dir, f"{doc_name}.pdf")
+            with open(pdf_path, "wb") as fh:
+                fh.write(pdf_bytes)
 
         sgml_path = os.path.join(tmp_dir, f"{doc_name}.sgm")
 

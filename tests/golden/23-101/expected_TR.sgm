@@ -1,0 +1,244 @@
+<POLIDOC LABEL="CSA Notice" LANG="EN" ADDDATE="20251103" MODDATE="20251103">
+<POLIDENT>
+<N>23-101</N>
+<TI>CSA Notice of Amendments to National Instrument 23-101 Trading Rules and Changes to Companion Policy 23-101 Trading Rules</TI>
+<DATE LABEL="Effective">November 3, 2025</DATE>
+</POLIDENT>
+<FREEFORM>
+<BLOCK2><TI>CSA Notice of Amendments to National Instrument 23-101 Trading Rules and Changes to Companion Policy 23-101 Trading Rules</TI>
+</BLOCK2>
+<BLOCK2><TI>Introduction</TI>
+<P>The Canadian Securities Administrators (the <BOLD>CSA </BOLD>or <BOLD>we</BOLD>) are publishing in final form amendments to National Instrument 23-101 <EM>Trading Rules</EM> (<BOLD><EM>NI 23-101</EM></BOLD>) (the <BOLD>Amendments</BOLD>) and accompanying changes to Companion Policy to <EM>NI 23-101</EM> <EM>Trading Rules</EM> (<BOLD><EM>NI 23-101C</EM>P</BOLD>) (the <BOLD>CP Changes</BOLD>).</P>
+<P>The Amendments and CP Changes modify section 6.6.1 of <EM>NI 23-101</EM> to lower the active trading fee cap <FOOTNOTE><FREEFORM><P>An active trading fee refers to the fee applied for executing an order that was entered to execute against a displayed order on a particular marketplace.</P></FREEFORM></FOOTNOTE>applicable to trades in securities that are listed on both a Canadian recognized exchange and a U.S. registered national securities exchange (U.S. Inter-<BOLD>listed Securities) and make </BOLD>related changes to <EM>NI 23-101C</EM>P.</P>
+<P>We are publishing clean and blacklined versions of the text of the Amendments and CP Changes in Annexes A through D to this notice, together with summary of comments at Annex E. The text of the Amendments and CP Changes will also be available on the websites of the CSA jurisdictions, including:</P>
+<P>
+<LINE>www.lautorite.qc.ca</LINE>
+<LINE>www.asc.ca</LINE>
+<LINE>www.bcsc.bc.ca</LINE>
+<LINE>www.nssc.novascotia.ca</LINE>
+<LINE>www.fcnb.ca</LINE>
+<LINE>www.osc.ca</LINE>
+<LINE>www.fcaa.gov.sk.ca</LINE>
+<LINE>www.mbsecurities.ca</LINE>
+</P>
+<P>Provided all necessary ministerial approvals are obtained, the Amendments will come into force on, and the CP Changes will take effect on <BOLD>November 2, 2026.</BOLD></P>
+<P>In a related initiative, the Canadian Investment Regulatory Organization (<BOLD>CIRO</BOLD>) published an approval to amend subsection 6.1(1) of the Universal Market Integrity Rules to align Canadian trading increments for certain U.S. Inter-listed Securities with the equivalent minimum pricing increment for these securities in the U.S.</P><FOOTNOTE><FREEFORM><P>www.ciro.ca/newsroom/publications/amendments-respecting-trading-increments</P></FREEFORM></FOOTNOTE>
+<P>The Amendments and CP Changes lower the maximum fee for executing an order involving a U.S. Inter-listed Security priced at CAD $1.00 or more. The Amendments amend section 6.6.1 of <EM>NI 23-101</EM> to cap active trading fees for U.S. Inter-listed Securities at CAD $0.0017 per share if the execution price of the security is greater than or equal to $1.00. Following this change, all equities priced at CAD $1.00 or more will have an active trading fee cap of CAD $0.0017. We will monitor the impact of the change in the fee cap over time and assess if further changes to the fee cap are required. Any further changes will be subject to public consultation.</P>
+</BLOCK2>
+<BLOCK2><TI>Background</TI>
+<P>Following a review by the CSA and CIRO of the U.S. Securities and Exchange Commission (<BOLD>SEC</BOLD>) amendments to establish a variable (and in many cases smaller) minimum trading increment for securities (<BOLD>SEC Tick Size Rule</BOLD>) and, in conjunction, reduce the trading fee caps charged in the U.S. (<BOLD>SEC Trading Fee Rule</BOLD>), the CSA published proposed amendments to <EM>NI 23-101</EM> and changes to <EM>NI 23-101C</EM>P on January 23, 2025 (the <BOLD>Request for Comment</BOLD>) to reduce the trading fee cap for U.S. Inter-listed Securities to CAD $0.0010 for securities inter-listed on a U.S. registered national securities exchange priced at or above CAD $1.00.<FOOTNOTE><FREEFORM><P>CSA Notice and Request for Comment&mdash;Proposed Amendments to National Instrument 23-101 Trading Rules - The CSA and CIRO had earlier published a request for feedback on the SEC Tick Size Rule and the SEC Trading Fee rule when they were first proposed by the SEC and published for comment: Request for Feedback on December 2022 SEC Market Structure Proposals and Potential Impact on Canadian Capital Markets, CSA and CIRO Staff Notice 23-331 (19 October 2023).</P></FREEFORM></FOOTNOTE> The trading fee cap proposed in the Request for Comment matched the SEC trading fee cap of USD $0.0010 without consideration of foreign exchange rates. After considering the comments received in response to the publication, we have made non-material changes to certain aspects of the proposals. For additional background on the substance and purpose of the Amendments and CP Changes, please refer to the Request for Comment.</P>
+<P>The SEC Tick Size Rule and SEC Trading Fee Rule were originally to come into effect on November 3, 2025 but implementation was paused pending the outcome of litigation challenging the rules. They will now be implemented on November 2, 2026<FOOTNOTE><FREEFORM><P>https://www.sec.gov/files/rules/exorders/2025/34-104172.pdf</P></FREEFORM></FOOTNOTE>, which is the date on which the Amendments will come into force and CP Changes will take effect.</P>
+</BLOCK2>
+<BLOCK2><TI>Summary of Written Comments Received by the CSA</TI>
+<P>In response to the Request for Comment, we received 10 responses. We have considered the comments received and thank all the commenters for their input. A list of those who submitted comments, a summary of the comments and our responses are attached at Annex E to this notice. Copies of the comment letters are available at www.osc.ca and www.lautorite.qc.ca.</P>
+</BLOCK2>
+<BLOCK2><TI>Summary of Notable Changes</TI>
+<P>As noted above, the Request for Comment initially proposed lowering the trading fee cap for U.S. Inter-listed Securities to CAD $0.0010 per share if the execution price of the security is greater than or equal to $1.00, which aligns with the SEC Trading Fee Rule at USD $0.0010 per share. The rationale for the cap was to prevent order flow in Canadian securities migrating to U.S. marketplaces to avoid higher Canadian trading fees and to prevent potential share price distortions that may result from the combination of reduced minimum trading increments and high trading fees. However, there was little consensus among commenters on whether a trading fee cap of $0.0010 per share or alternative fee caps were more appropriate or would be effective in keeping order flow in Canada. Some commenters supported a trading fee cap of $0.0010, while the others supported trading fee caps ranging from $0.0017 to $0.0030 per share, while some supported removing the fee cap entirely. In particular, some commenters warned that a $0.0010 cap would make it more difficult for Canadian marketplaces to compete for order flow by offering higher rebates.</P>
+<P>Adopting a $0.0017 trading fee cap for U.S. Inter-listed Securities lowers the trading fee cap from the existing $0.0030 per share while better approximating the Canadian dollar equivalent of the U.S. fee cap of USD $0.0010 (which is approximately CAD $0.0014 at current exchange rates), reflecting the current foreign exchange rate and providing marketplaces greater flexibility in setting their respective fee schedules. Additionally, a CAD $0.0017 trading fee cap for U.S. Inter-listed Securities creates a more simplified fee cap regime as that fee cap aligns with the cap for non-U.S. Inter-listed Securities.</P>
+<P>The change from a $0.0010 to a $0.0017 fee cap is appropriate because:
+<ITEM><P>o the higher fee cap gives marketplaces greater flexibility in setting trading fees,</P></ITEM>
+<ITEM><P>o it does not result in a fee cap that is materially higher than the U.S. cap taking into account foreign exchange rates and is thus consistent with the rationale for lowering the fee cap for inter-listed securities, and</P></ITEM>
+<ITEM><P>o the Request for Comment specifically asked whether a $0.0017 fee cap was more appropriate than the proposed $0.0010 fee cap and, as evidenced in Annex E, there was some support for a $0.0017 fee cap.</P></ITEM>
+</P>
+</BLOCK2>
+<BLOCK2><TI>Annexes</TI>
+<P>
+<ITEM><P>Annex A&mdash;Amendments to National Instrument 23-101 <EM>Trading Rules</EM></P></ITEM>
+<ITEM><P>Annex B&mdash;Changes to Companion Policy 23-101 <EM>Trading Rules</EM></P></ITEM>
+<ITEM><P>Annex C&mdash;Blackline Showing Amendments to National Instrument 23-101 <EM>Trading Rules</EM></P></ITEM>
+<ITEM><P>Annex D - Blackline Showing Changes to Companion Policy 23-101 <EM>Trading Rules</EM></P></ITEM>
+<ITEM><P>Annex E&mdash;Summary of Comments and CSA Responses</P></ITEM>
+<ITEM><P>Annex F&mdash;Local matters (where applicable)</P></ITEM>
+<ITEM><P><BOLD>Questions</BOLD></P></ITEM>
+<ITEM><P>Please refer your questions to any of the following:</P></ITEM>
+</P>
+<P>
+<P1>
+<LINE>Mark Delloro</LINE>
+<LINE>Senior Accountant, Trading &amp; Markets</LINE>
+<LINE>Ontario Securities Commission</LINE>
+<LINE><EM>mdelloro@osc.gov.on.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Alex Petro</LINE>
+<LINE>Trading Specialist, Trading &amp; Markets</LINE>
+<LINE>Ontario Securities Commission</LINE>
+<LINE><EM>apetro@osc.gov.on.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Serge Boisvert</LINE>
+<LINE>Senior Policy Coordinator</LINE>
+<LINE>Direction de l'encadrement des activit&eacute;s de</LINE>
+<LINE>n&eacute;gociation</LINE>
+<LINE>Autorit&eacute; des march&eacute;s financiers</LINE>
+<LINE><EM>serge.boisvert@lautorite.qc.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Tim Baikie</LINE>
+<LINE>Senior Legal Counsel, Trading &amp; Markets</LINE>
+<LINE>Ontario Securities Commission</LINE>
+<LINE><EM>tbaikie@osc.gov.on.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Xavier Boulet</LINE>
+<LINE>Senior Policy Advisor</LINE>
+<LINE>Direction de l'encadrement des activit&eacute;s de</LINE>
+<LINE>n&eacute;gociation</LINE>
+<LINE>Autorit&eacute; des march&eacute;s financiers</LINE>
+<LINE><EM>xavier.boulet@lautorite.qc.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Kim Legendre</LINE>
+<LINE>SRO Analyst</LINE>
+<LINE>Direction de l'encadrement des activit&eacute;s de</LINE>
+<LINE>n&eacute;gociation</LINE>
+<LINE>Autorit&eacute; des march&eacute;s financiers</LINE>
+<LINE><EM>Kim.Legendre@lautorite.qc.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Jesse Ahlan</LINE>
+<LINE>Senior Regulatory Analyst, Market</LINE>
+<LINE>Structure</LINE>
+<LINE>Alberta Securities Commission</LINE>
+<LINE><EM>jesse.ahlan@asc.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Navdeep Gill</LINE>
+<LINE>Senior Legal Counsel</LINE>
+<LINE>British Columbia Securities Commission</LINE>
+<LINE><EM>NGill@bcsc.bc.ca</EM></LINE>
+</P1>
+</P>
+</BLOCK2>
+</FREEFORM>
+<APPENDIX LABEL="Annex" ADDDATE="20251103" LANG="EN" MODDATE="20251103">
+<N>A</N>
+<FREEFORM>
+<BLOCK2><TI>AMENDMENTS TO NATIONAL INSTRUMENT 23-101 TRADING RULES</TI>
+<P><BOLD><EM>1. National Instrument 23-101 Trading Rules is amended by this Instrument.</EM></BOLD></P>
+<BLOCK3><N>2.</N><TI>Section 6.6.1 is amended in subsection (2) by replacing paragraphs (a) and (b) with the following:</TI>
+<P>
+<ITEM><P>(a) is greater than $0.0017 per security traded for an equity security, or per unit traded for an exchange-traded fund, if the execution price of each security or unit traded is greater than or equal to $1.00, and</P></ITEM>
+<ITEM><P>(b) is greater than $0.0004 per security traded for an equity security, or per unit traded for an exchange-traded fund, if the execution price of each security or unit traded is less than $1.00.<BOLD><EM>.</EM></BOLD></P></ITEM>
+</P>
+<BLOCK4><N>3.</N><TI>Section 6.6.2 is repealed.</TI>
+<P>4. This Instrument comes into force on November 2, 2026.</P>
+</BLOCK4>
+</BLOCK3>
+</BLOCK2>
+</FREEFORM>
+</APPENDIX>
+<APPENDIX LABEL="Annex" ADDDATE="20251103" LANG="EN" MODDATE="20251103">
+<N>B</N>
+<FREEFORM>
+<BLOCK2><TI>CHANGES TO COMPANION POLICY 23-101 TRADING RULES</TI>
+<P><BOLD><EM>1. Companion Policy 23-101 to National Instrument 23-101 Trading Rules is changed by this Document.</EM></BOLD></P>
+<BLOCK3><N>2.</N><TI>Section 6.4.1 is deleted.</TI>
+<P>3. This change becomes effective on November 2, 2026.</P>
+</BLOCK3>
+</BLOCK2>
+</FREEFORM>
+</APPENDIX>
+<APPENDIX LABEL="Annex" ADDDATE="20251103" LANG="EN" MODDATE="20251103">
+<N>C</N>
+<FREEFORM>
+<BLOCK2><TI>BLACKLINE SHOWING AMENDMENTS TO NATIONAL INSTRUMENT 23-101 TRADING RULES</TI>
+</BLOCK2>
+<BLOCK2><TI>Trading Fees</TI>
+<P>
+<ITEM><P>(1) In this section</P></ITEM>
+<ITEM><P>&ldquo;exchange-traded fund&rdquo; means a mutual fund</P></ITEM>
+<ITEM><P>a. the units of which are listed securities or quoted securities, and</P></ITEM>
+<ITEM><P>b. that is in continuous distribution in accordance with applicable securities legislation; and</P></ITEM>
+</P>
+<P>&ldquo;inter-listed security&rdquo; means an exchange-traded security that is also listed on an exchange that is registered as a &ldquo;national securities exchange&rdquo; in the United States of America under section 6 of the 1934 Act.
+<ITEM><P>(2) A marketplace that is subject to section 7.1 of <EM>NI 21-101</EM> must not charge a fee for executing an order that was entered to execute against a displayed order on the marketplace that,</P></ITEM>
+<ITEM><P>(a)&mdash;in the case of an order involving an inter listed security,</P></ITEM>
+<ITEM><P>+&mdash;is greater than $0.0030 per security traded for an equity security, or per unit traded for an exchange traded fund, if the execution price of each security or unit traded is greater than or equal to $1.00, and</P></ITEM>
+<ITEM><P>11.&mdash;is greater than $0.0004 per security traded for an equity security, or per unit traded for an exchange traded fund, if the execution price of each security or unit traded is less than $1.00; or</P></ITEM>
+<ITEM><P>b&mdash;in the case of an order involving a security that is not an inter listed security,</P></ITEM>
+<ITEM><P>+&mdash;is greater than $0.0017 per security traded for an equity security, or per unit traded for an exchange traded fund, if the execution price of each security or unit traded is greater than or equal to $1.00, and</P></ITEM>
+<ITEM><P>12.&mdash;is greater than $0.0004 per security traded for an equity security, or per unit traded for an exchange traded fund, if the execution price of each security or unit traded is less than $1.00.</P></ITEM>
+<ITEM><P>(b) is greater than $0.0017 per security traded for an equity security, or per unit traded for an exchange-traded fund, if the execution price of each security or unit traded is greater than or equal to $1.00, and</P></ITEM>
+<ITEM><P>(c) is greater than $0.0004 per security traded for an equity security, or per unit traded for an exchange-traded fund, if the execution price of each security or unit traded is less than $1.00.</P></ITEM>
+<ITEM><P>(3) A recognized exchange must maintain a list of inter-listed securities that are listed on the exchange as of the last day of each calendar quarter.</P></ITEM>
+<ITEM><P>(4) A recognized exchange must publicly disclose on its website the list referred to in subsection (3)</P></ITEM>
+<ITEM><P>a. within 7 days after the last day of each calendar quarter, and</P></ITEM>
+<ITEM><P>b. for a period of at least 12 months commencing on the date it is publicly disclosed on the website.</P></ITEM>
+<ITEM><P><BOLD>Ceasing to be inter listed security&mdash;fee transition-period</BOLD></P></ITEM>
+<ITEM><P><BOLD>6.6.2 I</BOLD>f a security ceases to be an inter listed security, paragraph 6.6.1(2)(b) does not apply if</P></ITEM>
+<ITEM><P>a.&mdash;less than 35 days has passed since the first date, following the cessation, the list referred to in subsection 6.6.1(4) was publicly disclosed, and</P></ITEM>
+<ITEM><P>b&mdash;the fee charged is in compliance with paragraph 6.6.1(2)(a) as if the security were still an inter listed security.</P></ITEM>
+</P>
+</BLOCK2>
+</FREEFORM>
+</APPENDIX>
+<APPENDIX LABEL="Annex" ADDDATE="20251103" LANG="EN" MODDATE="20251103">
+<N>D</N>
+<FREEFORM>
+<BLOCK2><TI>BLACKLINE SHOWING CHANGES TO COMPANION POLICY 23-101 TRADING RULES</TI>
+<P>
+<ITEM><P><BOLD>Trading Fees&mdash;</BOLD>Section 6.6.1 provides caps on the fee that a marketplace subject to section 7.1 of NI 21 101 can charge for execution against a displayed order on the marketplace. Paragraph 6.6.1(2)(a) establishes a higher trading fee cap for exchange traded securities that are inter listed (i.e., listed on both a recognized exchange and a national securities exchange in the United States of America) and priced at or above $1.00. Subsections 6.6.1 (3) and (4) provide a process to ensure transparency of a security's status as an inter listed security, and require a recognized exchange to publish a quarterly list of all of its inter listed securities no later than seven days after the end of each quarter. In compiling the list, an exchange may rely on representations made by its listed issuers as to their status. Section 6.6.2 addresses the situation where a security's status as an inter listed security changes, specifically, when a security is delisted from all U.S. national securities exchanges on which it was listed and is now only listed on a recognized exchange in Canada and is no longer an inter listed security. Section 6.6.2 requires marketplaces to make any reductions to their fees that are necessary to comply with paragraph 6.6.1(2)(b) no later than 35 days following the publication of the first list indicating that the security is no longer an inter listed security.</P></ITEM>
+</P>
+</BLOCK2>
+</FREEFORM>
+</APPENDIX>
+<APPENDIX LABEL="Annex" ADDDATE="20251103" LANG="EN" MODDATE="20251103">
+<N>E</N>
+<FREEFORM>
+<BLOCK2><TI>SUMMARY OF COMMENTS AND CSA RESPONSES</TI>
+</BLOCK2>
+<BLOCK2><TI>List of Commenters</TI>
+<P>1. BMO Capital Markets</P>
+<P>2. Canadian Independent Finance and Innovation Counsel Inc.</P>
+<P>3. Investment Industry Association of Canada</P>
+<P>4. Nasdaq Canada</P>
+<P>5. National Bank Financial Inc.</P>
+<P>6. Scotiabank</P>
+<P>7. TD Securities</P>
+<P>8. TMX Group Limited</P>
+<P>9. Tradelogiq Markets Inc.</P>
+<P>10. Virtu Financial</P>
+</BLOCK2>
+<BLOCK2><TI>Question 1:</TI>
+<P>
+<ITEM><P><BOLD>a) Do you agree with the proposal to align the maximum fee for executing an order involving a U.S. Inter-listed Security priced at CAD 1.00 or more with the reduced access fee cap adopted by the SEC:</BOLD></P></ITEM>
+<ITEM><P><BOLD>i) at CAD 0.0010, as proposed above, without consideration for the current foreign exchange rate, or</BOLD></P></ITEM>
+<ITEM><P><BOLD>ii) at CAD 0.0014, which approximates the SEC's adopted access fee cap with consideration for the foreign exchange rate (USD 0.0010 x 1.44)?5</BOLD></P></ITEM>
+<ITEM><P><BOLD>b) Alternatively, do you support aligning the access fee cap for U.S. Inter-listed Securities with the current fee cap for non-U.S. Inter-listed securities (CAD 0.0017)?</BOLD></P></ITEM>
+<ITEM><P><BOLD>c) Do you support any alternatives not listed above?</BOLD></P></ITEM>
+<ITEM><P><BOLD>Please provide rationale in support of or against any alternatives above.</BOLD></P></ITEM>
+<ITEM><P><BOLD>Summary of Comments</BOLD></P></ITEM>
+<ITEM><P>Five commentors supported a CAD 0.0010 fee cap.</P></ITEM>
+<ITEM><P>One commentor supported eliminating the distinction in fee caps between U.S. Inter-listed Securities and non-U.S. Inter-listed Securities. The fee cap for non-U.S. Inter-listed Securities is currently CAD 0.0017.</P></ITEM>
+<ITEM><P>One commentor supported a CAD 0.0025 fee cap.</P></ITEM>
+<ITEM><P>One commentor supported a CAD 0.0030 fee cap, but if they had to choose one of the options listed, they would support a CAD 0.0017 fee cap.</P></ITEM>
+<ITEM><P>Two commentors supported eliminating fee caps in favour of a market-driven fee structure.</P></ITEM>
+<ITEM><P><BOLD>Question 2:</BOLD></P></ITEM>
+<ITEM><P><BOLD>Will the competitiveness of the Canadian capital markets be impaired if only the trading fee caps are lowered for U.S. Inter-listed Securities? Please provide supporting rationale.</BOLD></P></ITEM>
+<ITEM><P><BOLD>&bull; </BOLD>One commentor believes that any change in trading fee caps will not impact how companies use U.S Inter-listed Securities.</P></ITEM>
+<ITEM><P><BOLD>CSA Response</BOLD></P></ITEM>
+</P>
+<P>We have amended the rule to implement a CAD 0.0017 fee cap.</P>
+<P>We are monitoring and will continue to monitor how any changes to the trading fee cap impact the competitiveness of the Canadian capital markets.</P>
+<P>5 The CAD/USD exchange rate was approximately 1.44 at the time of publication of the Request for Comment.
+<P1>Two commentors believe that lowering Canadian trading fee caps on U.S. Inter-listed Securities could incentivize Canadian investors and traders to use more U.S. marketplaces where higher rebates can be offered, leading to decreased order flow in Canada.</P1>
+<P1>Three commentors believe having a harmonized fee cap for all securities in Canada would reduce marketplace fee complexity. There was some disagreement on what that harmonized fee should be&mdash;some commentors supported a CAD 0.0010 fee cap for all securities, whereas others supported a CAS 0.0017 fee cap for all securities.</P1>
+</P>
+</BLOCK2>
+<BLOCK2><TI>Question 3:</TI>
+<P><BOLD>Should the trading fee caps apply to trading fees paid by passive orders in inverted (taker-maker) markets? Please provide supporting rationale. What would be the costs and benefits of applying the cap to inverted markets?</BOLD>
+<P1>Two commentors supported applying the same trading fee caps paid by passive orders in inverted markets as those in non-inverted markets as externalities and distortions raise overall transactions costs for the market.</P1>
+<P1>Two commentors said that there should be no regulatory restriction on the level of fees for passive orders or associated rebates for active orders on inverted venues because a natural limit, determined by market forces, already exists. At some point, the liquidity providing fee becomes too expensive for participants to make markets and liquidity providers will stop routing orders to the marketplace.</P1>
+</P>
+<P>The fee cap is intended to apply to orders that a marketplace participant may be required to interact with as a result of the order protection rule. No one is required to post a passive order on an inverted market.</P>
+</BLOCK2>
+<BLOCK2><TI>Question 4:</TI>
+<P><BOLD>As part of the final rules adopted on September 18, 2024, the SEC rules prohibit a national securities exchange from imposing any fee or providing any rebate for the execution of an order in an NMS stock unless such fee or rebate can be determined at the time of execution. Please discuss whether we should take a similar approach in Canada.</BOLD>
+<ITEM><P><BOLD>&bull; </BOLD>Generally, all commentors support pre-trade transparency in trading fees. Some commentors agreed that investors benefit from understanding the full extent of the trading costs at the time of execution. However, other commentors believe that using the existing published fee schedules is sufficient for pre-trade fee transparency.</P></ITEM>
+<ITEM><P><BOLD>&bull; </BOLD>Generally, Canada's marketplaces offer different volume discount programs than exist in the U.S. which result in less frequent routing conflicts in Canada. As such, there is no change to the pre-trade fee transparency requirements at this time.</P></ITEM>
+</P>
+</BLOCK2>
+</FREEFORM>
+</APPENDIX>
+</POLIDOC>

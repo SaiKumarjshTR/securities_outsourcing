@@ -1,0 +1,392 @@
+<POLIDOC LABEL="CSA Staff Notice" LANG="EN" ADDDATE="20260825" MODDATE="20260825">
+<POLIDENT>
+<N>96-307 (Revised)</N>
+<TI>Frequently Asked Questions about Derivatives Trade Reporting</TI>
+</POLIDENT>
+<FREEFORM>
+<BLOCK2><TI>Frequently Asked Questions about Derivatives Trade Reporting</TI>
+<P>First published May 1, 2025; revised January 21, 2026</P>
+<P>January 21, 2026</P>
+<P>Staff of the member jurisdictions of the Canadian Securities Administrators (<BOLD>CSA Staff </BOLD>or <BOLD>we</BOLD>) have compiled a list of frequently asked questions (<BOLD>FAQs</BOLD>) that we have received about the CSA derivatives trade reporting rules, as amended by amendments that were published on July 25, 2024 and came into force on July 25, 2025 (collectively, the <BOLD>TR Rules</BOLD>).</P><FOOTNOTE><FREEFORM><P>Manitoba Securities Commission Rule 91-507 Derivatives: Trade Reporting (MSC 91-507), Ontario Securities Commission Rule 91-507 Derivatives: Trade Reporting (OSC 91-507), Regulation 91-507 respecting Trade Repositories and Derivatives Data Reporting (Qu&eacute;bec) (AMF 91-507) and, in the remaining provinces and territories, Multilateral Instrument 96-101 Derivatives: Trade Reporting (MI 96-101).</P></FREEFORM></FOOTNOTE>
+<P>The purpose of the FAQs is to provide clarity about how certain requirements under the TR Rules should be implemented, while preserving flexibility to the extent possible for reporting counterparties and trade repositories to operationalize these requirements in the context of their particular business frameworks.</P>
+<P>The list of FAQs below is not exhaustive but includes key issues and questions that market participants have posed to us since publication of the amendments, along with our current views. CSA Staff may update these FAQs from time to time as necessary. CSA Staff welcome comments and questions from market participants on an ongoing basis. The FAQs will be posted on the websites of the local regulators or securities regulatory authorities.</P><FOOTNOTE><FREEFORM><P>Referred to in this Notice as &ldquo;regulator&rdquo;.</P></FREEFORM></FOOTNOTE>
+<P>CSA Staff also refer market participants to the CSA Summary of Comments and Responses<FOOTNOTE><FREEFORM><P>See here.</P></FREEFORM></FOOTNOTE> that was published together with the amendments to the TR Rules, and which also include responses to questions that were raised in 2022 during our consultation on the proposed amendments.</P>
+<P>The responses to the FAQs represent the views of CSA Staff and do not constitute legal advice.</P>
+<P>This Notice updates and replaces a prior version of this Notice that was published on May 1, 2025 and reflects additional questions that CSA Staff received from market participants. A redline showing the changes is attached.</P>
+<BLOCK3><N>A.</N><TI>Reporting Counterparty Hierarchy</TI>
+<P><EM>#</EM></P>
+</BLOCK3>
+</BLOCK2>
+<BLOCK2><TI>Section</TI>
+</BLOCK2>
+<BLOCK2><TI>Question</TI>
+</BLOCK2>
+<BLOCK2><TI>Response</TI>
+<P>1.</P>
+<P>OSC 91-507 s. 25</P>
+<P>The definition of &ldquo;ISDA methodology&rdquo; in paragraph 25(3)(a) of OSC 91-507 refers to the Canadian Transaction Reporting Party Requirements dated April 4, 2014 and amended as of March 20, 2015.</P>
+<P>If the Canadian Transaction Reporting Party Requirements are subsequently further amended, how should the term &ldquo;ISDA methodology&rdquo; be interpreted?</P>
+<P>Market participants should refer to the most current version of the Canadian Transaction Reporting Party Requirements.</P>
+<P>Staff of the Ontario Securities Commission intend to consider potential updates to the definition of &ldquo;ISDA methodology&rdquo; in OSC 91-507 at a convenient time following any further amendment to the Canadian Transaction Reporting Party Requirements.</P>
+<P>2.</P>
+<P>Is the definition of &ldquo;financial entity&rdquo; in OSC 91-507 intended to capture commodity dealers? Is the definition intended to capture all derivatives dealers that are exempt from registration in a jurisdiction of Canada or a foreign jurisdiction?</P>
+<P>The definition of &ldquo;financial entity&rdquo; is not intended to capture commodity dealers in Canada or a foreign jurisdiction that are not affiliated with another &ldquo;financial entity.&rdquo; We also note that the Companion Policy to Paragraph 25(1)(f) of OSC 91-507 indicates that a commodity dealer is an example of a non-financial entity. The definition of &ldquo;financial entity&rdquo; is also not intended to capture an entity solely because of a requirement to register or reliance on an exemption from registration under the securities legislation or commodities futures legislation of any jurisdiction of Canada or under the laws of a foreign jurisdiction. Staff of the Ontario Securities Commission intend to consider potential updates to the definition to provide further clarity in subsequent amendments to OSC 91-507.</P>
+<P>3.</P>
+<P>General</P>
+<P>Is it possible that more than one of the TR Rules could apply to a derivative?</P>
+<P>Yes. For example, if a derivative involves a local counterparty in Manitoba and Ontario, then both MSC 91-507 and OSC 91-507 apply. A Manitoba derivatives dealer could have a reporting obligation under OSC 91-507 and an Ontario derivatives dealer could have a reporting obligation under MSC 91-507.</P>
+<P>Foreign counterparties may also have reporting requirements under any of the TR Rules where the derivative involves a local counterparty.</P>
+<P>The TR Rules are generally aligned and capable of compliance in a consistent manner, so we do not expect there to be conflicts in compliance between the TR Rules.</P>
+<BLOCK3><N>B.</N><TI>Verification</TI>
+<P>26.1(b) and (c)</P>
+<P>Could you please clarify if an end-user is required to verify derivatives data?</P>
+<P>The data verification requirements under these paragraphs do not apply to a reporting counterparty4 that is not a clearing agency5 or derivatives dealer.6</P>
+<P>While all reporting counterparties (including reporting counterparties that are not clearing agencies or derivatives dealers) must, under paragraph 26.1(a) of the TR Rules, ensure the accuracy of the data that they report, only clearing agencies and derivatives dealers must verify the accuracy of that data on an ongoing basis.</P>
+</BLOCK3>
+<BLOCK3><N>C.</N><TI>Reporting of an Error or Omission by the Non-reporting Counterparty</TI>
+<P>26.3(1)</P>
+<P>A local counterparty, other than the reporting counterparty, must notify the reporting counterparty of an error or omission with respect to derivatives data. Does this mean that</P>
+<P>This requirement was already present in the pre-amended TR Rules but in a different section. It does not require a local counterparty, other than the reporting counterparty, to review the accuracy of the reporting counterparty's derivatives data. However, if a</P>
+<P>4 References in this Notice to &ldquo;reporting counterparty&rdquo; should be read as referring to, where section 36.1 of the TR Rules applies, a derivatives trading facility or facility for trading derivatives.</P>
+<P>5 References in this Notice to &ldquo;clearing agency&rdquo; should be read as referring to the reporting clearing agency, reporting clearing house, or recognized or exempt clearing agency, as defined in the relevant TR Rule.</P>
+<P>6 References in this Notice to &ldquo;derivatives dealer&rdquo; should be read as referring to, with respect to AMF 91-507, a person subject to the registration requirement as a dealer under the <EM>Derivatives Act</EM>, which includes a person that is registered or exempt from registration.</P>
+<P><EM>#</EM><BOLD> Section Question</BOLD> the non-reporting counterparty must review the accuracy of the reporting counterparty's reports?</P>
+<P>local counterparty that is not the reporting counterparty does discover an error, it is required to notify the reporting counterparty.</P>
+<P>While not a requirement under the TR Rules, larger market participants may wish to consider, where feasible, reviewing reported data for which they are the non-reporting counterparty. Inaccurate data reported by a reporting counterparty may impact regulatory requirements that apply to the non-reporting counterparty. For example, if the notional amount of a derivative is erroneously reported as being exaggerated, it could cause a regulator to view certain thresholds (for example, under National Instrument 93-101 <EM>Derivatives: Business Conduct</EM> or National Instrument 94-101 <EM>Mandatory Central Counterparty Clearing of Derivatives</EM>) to have been triggered where, in fact, they may not have been triggered. Also, where a derivatives participation fee may be payable by the non-reporting counterparty in certain jurisdictions, an error by the reporting counterparty could cause an error in the non-reporting counterparty's fee calculation based on the erroneous reported data. In these circumstances, while the actual notional amount is what is relevant, the erroneous reported notional amount may nevertheless result in errors in the application of these thresholds and fees if there is reliance on the reported data.</P>
+<P>Also, as noted in the Companion Policy7 under subsection 32(4), reporting counterparties of the original derivative and clearing agencies should ensure accurate data reporting so that original derivatives that have cleared can be reported as terminated by the clearing agency. Original derivatives that have cleared but have not been reported as terminated are a</P>
+<P>7 For CSA jurisdictions that publish a Policy Statement rather than a Companion Policy, references in this Notice to &ldquo;Companion Policy&rdquo; should be read as referring to the Policy Statement.</P>
+</BLOCK3>
+<BLOCK3><N>D.</N><TI>Notice of a Significant Error or Omission&mdash;General</TI>
+<P>26.3(2)</P>
+<P>In interpreting the guidance in the Companion Policy under subsection 26.3(2), which of the following two approaches should reporting counterparties take:
+<ITEM><P>(1) review each of the four enumerated factors, but only consider those factors to be relevant to the extent they impair the ability of the regulator to fulfill its mandate, or</P></ITEM>
+<ITEM><P>(2) consider that where one of the four enumerated factors applies, this indicates that the error or omission impairs the ability of the regulator to fulfill its mandate, and that the error or omission is therefore significant?</P></ITEM>
+<ITEM><P>The second interpretation is correct.</P></ITEM>
+</P>
+<P>Where one of the four factors applies, our view is that the error or omission impairs the ability of the regulator to fulfill its mandate, and the error or omission is therefore significant.</P>
+<P>For example, an error or omission in the notional amount of a derivative that has been outstanding for 7 business days is significant under the &ldquo;type&rdquo; factor. It is not necessary to consider, as a second step to the analysis, whether it may impair the ability of the regulator to fulfill its mandate. In other words, because this factor applies, we consider that this error or omission impairs the ability of the regulator to fulfill its mandate, and therefore is significant.</P>
+<P>Is the &ldquo;late reporting&rdquo; box in Question 6 of CSA <EM>Staff Notice 96-308</EM> <EM>Notice of Significant Error or Omission</EM> only relevant to the &ldquo;Scope&rdquo; factor?</P>
+<P>No.</P>
+<P>In relation to the &ldquo;Scope&rdquo; factor, late reporting is only significant if reporting is delayed beyond 24 hours after the reporting deadline and exceeds the 10% threshold.</P>
+<P>Late reporting may be relevant for the &ldquo;Type&rdquo; factor if reporting is delayed beyond 7 business days and includes the data elements enumerated in the Companion Policy for this factor.</P>
+<P>Late reporting may be relevant for the &ldquo;Duration&rdquo; factor if reporting is delayed beyond 3 months.</P>
+<P>Late reporting may be relevant for the &ldquo;Other Circumstances&rdquo; factor if late reporting has occurred (irrespective of duration) while the circumstances described in this factor are present.</P>
+<P>Are derivatives that have expired or terminated relevant to determining each of the factors in the Companion Policy under subsection 26.3(2)?</P>
+</BLOCK3>
+<BLOCK3><TI>Scope, Type, Duration</TI>
+<P>These factors are intended to apply only with respect to derivatives that have not expired or terminated.</P>
+</BLOCK3>
+<BLOCK3><TI>Other Circumstances</TI>
+<P>This factor is intended to apply regardless of whether the derivative has expired or terminated (unless, as noted in the Companion Policy, the error or omission occurred more than three years before it is discovered).</P>
+<P>4.</P>
+<P>Could an error or omission in only one derivative be significant if it meets the criteria under the &ldquo;Type&rdquo;, &ldquo;Duration&rdquo; or &ldquo;Other Circumstances&rdquo; factors in the Companion Policy under subsection 26.3(2)?</P>
+<P>Yes.</P>
+<P>5.</P>
+<P>Does this subsection require a reporting counterparty to search reported derivatives data for errors and omissions?</P>
+<P>No. Subsection 26.3(2) only applies if a reporting counterparty discovers a significant error or omission, but does not require the reporting counterparty to search for errors and omissions. The requirement to review derivatives data for errors and omissions is limited to paragraphs 26.1(b) or (c), if applicable.</P>
+</BLOCK3>
+<BLOCK3><N>E.</N><TI>Notice of a Significant Error or Omission&mdash;Scope</TI>
+<P>Is the &ldquo;Scope&rdquo; factor in the Companion Policy under subsection 26.3(2) intended to apply separately to each province or territory in Canada?</P>
+<P>One purpose of the amendments to the TR Rules is to increase harmonization within CSA jurisdictions to support a harmonized operational implementation of the amendments. This purpose informs CSA Staff's view that, in interpreting this factor in the Companion Policy, reporting counterparties may consider it to apply with respect to all reporting under the TR Rules, and it is not necessary to consider the 10% threshold separately for each province or territory. However, the threshold should not be calculated on a global basis, but rather should include only derivatives that are required to be reported under the TR Rules.</P>
+<P>How often should a reporting counterparty assess whether the &ldquo;Scope&rdquo; factor in the Companion Policy under subsection 26.3(2) applies while an error or omission persists?</P>
+<P>In order to facilitate operationalizing this factor, it should be assessed at the time the reporting counterparty is determining whether the error or omission is significant. CSA Staff only expect a reporting counterparty to assess this factor again while the error or omission persists if the reporting counterparty subsequently becomes aware that the error or omission affects more derivatives than it had originally considered in first assessing this factor.</P>
+<P>For example, if the reporting counterparty determines that the error or omission only affects interest rate swaps and determines that the error or omission is not significant, but if it subsequently discovers that the error or omission also affects commodity derivatives, we expect the reporting counterparty to reassess this factor.</P>
+<P>However, if a reporting counterparty determines that the error or omission is not significant under the &ldquo;scope&rdquo; factor solely on the basis that reporting is not delayed beyond 24 hours after the reporting deadline (if the scope would otherwise be above the threshold), we expect the reporting counterparty to reassess the scope if the non-reporting persists beyond 24 hours after the reporting deadline. For example, if a reporting counterparty discovers that it failed to report 11% of its derivatives within 24 hours, and if it still has not reported these derivatives after this time, it should reassess the scope and notify the applicable regulators if the scope of the omission still exceeds 10%.</P>
+<P>If an error or omission occurs with respect to collateral that is reported at portfolio level, and the error or omission has affected all derivatives in the portfolio, which are more than 10% of the reporting counterparty's derivatives, for which it is the reporting counterparty, and that are required to be reported under the Rule, does the &ldquo;Scope&rdquo; factor in the Companion Policy under subsection 26.3(2) apply?</P>
+<P>Yes. In this circumstance, the &ldquo;Scope&rdquo; factor applies because this factor refers to the number of derivatives in respect of which an error or omission has occurred, regardless of whether the cause of the error may have been a single issue in calculating or reporting collateral for the portfolio.</P>
+<P>Is the 10% threshold specific to each asset class, or to the reporting counterparty's derivatives, for which it is the reporting counterparty, across all asset classes?</P>
+<P>The 10% threshold includes all asset classes. For example, if an error or omission affects 20% of a reporting counterparty's derivatives, for which it is the reporting counterparty, across all asset classes, but only 1% of its commodity derivatives, the error or omission is significant. The affected commodity derivatives should be reflected, together with derivatives in any other asset classes, in the reporting counterparty's Notice of Significant Error or Omission.</P>
+<P>Can a single Notice of Significant Error or Omission be submitted on behalf of multiple reporting counterparties within a corporate group?</P>
+<P>For Ontario, no. Each reporting counterparty should submit a separate webform to report a significant error or omission.</P>
+<P>For the other CSA jurisdictions, a single pdf form may be submitted on behalf of multiple reporting counterparties, provided that any information that is different for each reporting counterparty (for example in Questions 3, 4 and 18) is provided separately in respect of each reporting counterparty. A separate document may be attached for this purpose.</P>
+</BLOCK3>
+<BLOCK3><N>F.</N><TI>Notice of a Significant Error or Omission&mdash;Type</TI>
+<P>Companion Policy under subsection 26.3(2) begin?</P>
+<P>discovery (unless the error or omission was discovered on the same day that it occurred).</P>
+<P>For example, if an error in notional quantity occurred on April 1 and is discovered on April 4, the error would not be significant on April 4 under the &ldquo;type&rdquo; factor because it had not persisted for longer than 7 business days. However, on April 10, the error has persisted for longer than 7 business days and it then becomes significant under the &ldquo;type&rdquo; factor.</P>
+</BLOCK3>
+<BLOCK3><N>G.</N><TI>Notice of a Significant Error or Omission&mdash;Duration</TI>
+<P>When does the 3-month period indicated in the &ldquo;Duration&rdquo; factor in the Companion Policy under subsection 26.3(2) begin?</P>
+<P>The 3-month period begins on the date of the error or omission. It does not begin on the date of discovery (unless the error or omission was discovered on the same day that it occurred).</P>
+<P>For example, if an error occurred on April 1 and was discovered on May 1, the error would not be significant on May 1 under the &ldquo;duration&rdquo; factor because it had not persisted for longer than 3 months. On July 1, the error has persisted for longer than 3 months and therefore is significant under the &ldquo;duration&rdquo; factor.</P>
+<P>We appreciate that the effect will be that any error or omission that has been outstanding in derivatives data for greater than three months would generally be considered significant. This is intentional. We expect validation to reduce the number of errors and omissions in derivatives data, and we expect verification, where applicable, to reduce the duration of any outstanding errors or omissions.</P>
+</BLOCK3>
+<BLOCK3><N>H.</N><TI>Notice of a Significant Error or Omission&mdash;Other Circumstances</TI>
+<P>The &ldquo;Other Circumstances&rdquo; factor in the Companion Policy under subsection 26.3(2) refers to &ldquo;at the time of the error or omission&rdquo;. What does this mean?</P>
+<P>This factor is not intended to be limited to the time when the error or omission first occurs. It applies to any time the error or omission is outstanding. For example, if an error or omission first occurs on August 1, 2025 which results in non-reporting of creation data that is not remedied, and an event of default occurs the following day, the default occurs at the time of the error or omission. On the other hand, if the error or omission is fully remedied on August 1, 2025 before the default, the default does not occur at the time of the error or omission.</P>
+<P>A reporting counterparty might consider operationalizing this factor by developing a list of bankruptcies and credit events as they arise and then reviewing any subsequently discovered errors or omissions against this list. Another approach might be for a reporting counterparty to wait until it discovers an error or omission before checking for bankruptcies and credit events with respect to the affected derivatives. Alternatively, a reporting counterparty could, once a bankruptcy or credit event has occurred, review any reported derivatives with the counterparty or underlier to determine whether there are outstanding errors or omissions.</P>
+<P>Does the &ldquo;Other Circumstances&rdquo; factor in the Companion Policy under subsection 26.3(2) apply to all events that might trigger a default?</P>
+<P>No. We only consider this factor to be relevant if the counterparty is in bankruptcy or the reporting counterparty is notified by a regulator.</P>
+<P>A regulator may notify reporting counterparties if they consider &ldquo;Other Circumstances&rdquo; to apply in relation to a particular entity, but a reporting counterparty should not wait for this notice if the counterparty is bankrupt.</P>
+<P>This factor is typically relevant in the context of large- scale bankruptcies or credit events that are reported in the media, and where CSA Staff may be analyzing derivatives data to assess potential risk to the market. In that circumstance, the mandate of the regulator may be impaired if an error or omission in derivatives data either masks or exaggerates this risk and thereby frustrates CSA Staff's ability to accurately assess it. Errors in respect of material economic terms and non-reporting are likely to be most relevant.</P>
+<P>Does the reference to &ldquo;credit event&rdquo; under the &rdquo;Other Circumstances&rdquo; factor in the Companion Policy under subsection 26.3(2) apply only to instances where a credit event has been determined by a Credit Derivatives Determinations Committee?</P>
+<P>In order to facilitate operationalizing this factor, we would only consider a credit event to be relevant that is either pending, accepted, ongoing or has determined to have occurred by a Credit Derivatives Determination Committee or where the reporting counterparty is notified by a regulator.</P>
+<P>Market participants may consult publicly available information from the Credit Derivatives Determinations Committee website.</P><FOOTNOTE><FREEFORM><P>Available at https://www.cdsdeterminationscommittees.org As of the date of this FAQ, the &ldquo;All DC Requests&rdquo; section of the website &ldquo;identifies, in a summary table, all questions submitted to the DC for resolution.&rdquo; Upon clicking &ldquo;All DC Requests&rdquo; the classification of event categories appears on this &ldquo;Requests to the Determinations Committee&rdquo; page in the upper right-hand corner drop down box &ldquo;Show All Event Categories.&rdquo;</P></FREEFORM></FOOTNOTE>
+<P>A regulator may also notify reporting counterparties if they consider &ldquo;Other Circumstances&rdquo; to apply in relation to a particular entity, but a reporting counterparty should not wait for this notice if the credit event is either pending, accepted, ongoing or has determined to have occurred at a Credit Derivatives Determinations Committee.</P>
+<P>CSA Staff note that there is no time period under this factor because risk arising from a credit event may spread quickly and the regulator may require accurate derivatives data to analyze this risk.</P>
+</BLOCK3>
+</BLOCK2>
+<BLOCK2><N>I.</N><TI>Notice of a Significant Error or Omission&mdash;Application before Amendments come into Force</TI>
+<P>A reporting counterparty must notify the regulator of a significant error or omission that has occurred as soon as practicable after discovery of the error or omission.</P>
+<P>How does this requirement apply to errors and omissions that occurred before July 25, 2025?</P>
+<P>A reporting counterparty is not required under this subsection to provide notice of a significant error or omission that is fully remedied before July 25, 2025, or in respect of a derivative that is terminated or expired before July 25, 2025.</P>
+<P>The notice requirement under this subsection may apply to an error or omission that occurs before July 25, 2025 but is not fully remedied by that date. In this situation, the following factors (as specified in the Companion Policy) should be interpreted as applying beginning on July 25, 2025, as outlined more specifically below:
+<ITEM><P><EM>Scope</EM></P></ITEM>
+</P>
+<P>This factor applies to an error or omission that occurs before July 25, 2025 if, at any time on or after July 25, 2025, both the error or omission persists and it affects more than 10% of the reporting counterparty's reportable derivatives for which it is the reporting counterparty. For example, if the error or omission occurs on March 1, 2025 and, at that time, it affects more than 10% of the reporting counterparty's reportable derivatives for which it is the reporting counterparty, but if the error or omission is partially remedied by July 25, 2025 such that it affects less than 10% of the reporting counterparty's reportable derivatives for which it is the reporting counterparty on and after July 25, 2025, this factor does not apply.</P>
+<BLOCK3><TI>Type</TI>
+<P>This factor applies to an error or omission that occurs before July 25, 2025 if it relates to any of the data elements identified in the Companion Policy for this factor, and if it persists for longer than 7 business days beginning on July 25, 2025.</P>
+</BLOCK3>
+<BLOCK3><TI>Duration</TI>
+<P>This factor applies to an error or omission that occurs before July 25, 2025 if it persists for longer than three months beginning on July 25, 2025.</P>
+<P>This factor applies to an error or omission that occurs before July 25, 2025 if the error and omission persists on or after July 25, 2025 and if any of the circumstances described in the Companion Policy for this factor also occur or persist on or after July 25, 2025. For example, if an error or omission occurs on March 1, 2025 and persists on July 25, 2025 and if the counterparty is in default on July 25, 2025, this factor applies. However, if either the error or omission or the default is remedied before July 25, 2025, this factor does not apply. Also, if the counterparty is in default before July 25, 2025 and the derivative is terminated or expires before July 25, 2025, this factor does not apply even if the error or omission persists on or after July 25, 2025.</P>
+</BLOCK3>
+<BLOCK3><TI>Correction of Errors and Omissions Generally</TI>
+<P>It is important to note that reporting counterparties have an ongoing requirement to report accurately and to remedy any error or omission as soon as possible regardless of when the error or omission occurred or whether the factors outlined in the Companion Policy apply. There is no &ldquo;significant&rdquo; threshold to correcting an error or omission, whether the error or omission occurs before or after July 25, 2025.</P>
+</BLOCK3>
+<BLOCK3><N>J.</N><TI>Notice of a Significant Error or Omission&mdash;Updates to Submitted Notices and New Notices</TI>
+<P>particular issue, should the reporting counterparty notify the regulator regarding new errors or omissions (in respect of any new derivatives that it enters into) that are related to the same issue?</P>
+<P>For example, if a reporting counterparty notifies the regulator in relation to a technology error that has resulted in incorrect reporting of notional amounts, and this error is being replicated in new derivatives and/or new valuation data each day, the reporting counterparty is not required to submit additional notices each day in respect of each such new error or omission, as these errors or omissions are reasonably related and the issue was discovered at approximately the same time.</P>
+<P>However, a new notice is required if a new unrelated issue is discovered that results in a significant error or omission.</P>
+<P>Where a reporting counterparty notifies a regulator under subsection 26.3(2), is the reporting counterparty required to update the notice to reflect any changes to information provided in the notice, or any new information that the reporting counterparty identifies regarding the error or omission?</P>
+<P>As noted in the Companion Policy, we recognize that when a reporting counterparty provides a notice, it may not yet have a complete understanding of the error or omission. Therefore, the notice represents an initial &ldquo;snapshot&rdquo; of the error or omission based on the reporting counterparty's understanding at the time of completing the Notice.</P>
+<P>However, we only expect a notice to be updated in the following circumstances:
+<ITEM><P>The reporting counterparty determines that one or more asset classes that were not identified on the first notice are relevant to the error or omission.</P></ITEM>
+<ITEM><P>No remediation date or approximate remediation date was provided on the first notice, and the reporting counterparty subsequently determines a remediation date or approximate remediation date.</P></ITEM>
+<ITEM><P>The reporting counterparty provided an expected remediation date (or approximate date) on the first notice, but the actual or revised expected</P></ITEM>
+</P>
+<P>remediation date is more than 6 months after the date indicated on the first notice.</P>
+<P>Whether or not a reporting counterparty updates a notice, regulators may follow up with reporting counterparties to request additional updates or if they have questions regarding an error or omission.</P>
+<P>What should a reporting counterparty do if, after sending a notice to the regulator of a jurisdiction it subsequently discovers that a notice should also be sent to the regulator of another jurisdiction?</P>
+<P>If a reporting counterparty determines that a significant error or omission affected derivatives that were required to be reported under the TR Rule of a jurisdiction, it should submit the notice to the regulator of that jurisdiction. If it subsequently determines that the error or omission affected derivatives that were required to be reported under the TR Rule in another jurisdiction, the reporting counterparty should submit a notice at that time to the regulator of that other jurisdiction. In this situation, it is not necessary to resend or update the notice that was originally provided to the regulator that previously received it, except in any of the three circumstances described above.</P>
+<P>For example, if a derivatives dealer sends a notice to the Ontario Securities Commission, but subsequently discovers that the error or omission also affected derivatives involving a Saskatchewan local counterparty, it should send a notice to the Financial and Consumer Affairs Authority of Saskatchewan; however, it is not necessary to resend or update the notice that it previously sent to the Ontario Securities Commission, except in any of the three circumstances described above.</P>
+</BLOCK3>
+<BLOCK3><N>K.</N><TI>Transferring a Derivative to a Different Trade Repository</TI>
+<P>trade repository to which derivatives data is reported for derivatives that have not expired or been terminated?</P>
+<P>designated or recognized trade repository to which derivatives data is reported for one, some or all of its derivatives that have not expired or terminated.</P>
+<P>26.4</P>
+<P>Could a reporting counterparty change the designated or recognized trade repository to which derivatives data is reported for derivatives that have expired or terminated?</P>
+<P>If a reporting counterparty is transferring all open derivatives to a different trade repository, is it required to also transfer all of its expired or terminated derivatives?</P>
+<P>Transferring a reporting counterparty's expired or terminated derivatives is not required when transferring open derivatives.</P>
+<P>Section 3.5 of the CSA Derivatives Data Technical Manual provides that &ldquo;any live or dead (terminated or expired) transactions can be transferred out except for the transactions that are previously reported as an error&rdquo; (as provided under section 26.2 of the TR Rules). However, market participants should confirm with both the designated or recognized trade repositories involved in the transfer to confirm any operational limitations regarding transferring expired or terminated derivatives. For instance, it is possible that records relating to derivatives that have expired or terminated more than 7 years ago may no longer be held by a trade repository as provided under subsection 18(2) of the TR Rules.</P>
+</BLOCK3>
+<BLOCK3><N>L.</N><TI>Unique Transaction Identifiers</TI>
+<P>
+<P1>1. 29 Subsection 29(6) provides that a market participant that is required to assign a UTI must do so as soon as practicable after execution and in no event later than the time that the derivative is required to be reported.</P1>
+</P>
+<P>Subsection 29(8) provides that a counterparty that is required to assign the UTI must provide it to the persons indicated in that subsection as soon as practicable.</P>
+</BLOCK3>
+<BLOCK3><TI>Timeframes for assigning and providing a UTI</TI>
+<P>The timeframes under subsection 29(6), on the one hand, and subsections 29(7), (8) and (9), on the other hand, do not run concurrently because it is impossible to provide a UTI that has not yet been assigned. Once a UTI is assigned within the timeframe under subsection 29(6), it must then be provided within the timeframes specified under subsections 29(7), (8) or (9).</P>
+</BLOCK3>
+<BLOCK3><TI>What is meant by &ldquo;as soon as practicable&rdquo;?</TI>
+<P>The reference to &ldquo;as soon as practicable&rdquo; means within a reasonably prompt time in the circumstances. For</P>
+<P>What is meant by &ldquo;as soon as practicable&rdquo; in the context of subsection 29(8)? Are the timeframes under subsection 29(6) and subsection 29(8) the same?</P>
+<P>Could a derivatives dealer that is required to &ldquo;promptly deliver a written confirmation of the transaction&rdquo; under subsection 28(1) of National Instrument 93-101 <EM>Derivatives: Business Conduct</EM> provide the UTI at the same time as the confirmation?</P>
+<P>instance, the circumstances for a large bank may differ from those of a smaller commodity dealer or money services business.</P>
+<P>The Companion Policies indicate that the timeframes for reporting obligations under the TR Rules are based on UTIs being assigned and provided expediently. The purpose of providing a UTI to others is to enable them to use it in any required reporting, whether under the TR Rules or a foreign derivatives data reporting requirement. The timeframes under section 29 should be interpreted with a view to accomplishing this purpose.</P>
+<BLOCK3><TI>Could a derivatives dealer deliver a confirmation of the transaction at the same time as the UTI?</TI></BLOCK3>
+<P>Yes, provided it does not result in a delay in fulfilling the requirement to promptly deliver a written confirmation of the transaction or the requirement to provide the UTI as soon as practicable to enable the counterparty to use it in any required reporting.</P>
+<P>If a reporting counterparty that is a bank doesn't know whether its counterparty is a dealer (or under OSC 91-507, a dealer that is a financial entity), how would it determine which entity should assign a UTI?</P>
+<P>CSA Staff recognize that in certain instances under OSC 91-507, where one or both counterparties are not party to the ISDA Multilateral (as defined under section 25 of OSC 91-507), a financial entity (for example, a bank) may not be aware of whether its counterparty is a derivatives dealer, and if so whether it is a financial entity. For a derivative involving a local counterparty that is uncleared and not executed anonymously on a derivatives trading facility, the bank would have a reporting obligation under OSC 91-507 in this situation regardless of whether its counterparty is a derivatives dealer or a derivatives dealer that is a financial entity. As a result, the bank would have to assign a UTI when it reports the derivative. If the bank's counterparty is either not a derivatives dealer or a derivatives dealer that is not a financial entity, the bank's counterparty does not have a reporting obligation under OSC 91-507 and, as a result, there should be no duplication of either reporting or a UTI under OSC 91-507. However, if the bank's counterparty is a derivatives dealer that is also a financial entity, the bank's counterparty would also have a reporting obligation under OSC 91-507. The two counterparties may not be able to follow the UTI hierarchy under section 29 because they are unaware that there are, in fact, two reporting counterparties. CSA Staff recognize that this may result in duplicate UTIs. CSA Staff also recognize that duplicate UTIs may occur in other situations, such as where there is a single reporting counterparty under one of the TR Rules but two reporting counterparties (or a different reporting counterparty) under another of the TR Rules. CSA Staff intend to monitor this issue during implementation and work with industry participants to explore further potential refinements to the UTI hierarchy.</P>
+</BLOCK3>
+<BLOCK3><N>M.</N><TI>Valuation Data</TI>
+<P>From whose perspective is the valuation amount reported under Appendix A to the TR Rules&mdash;Data Element Number 101?</P>
+<P>The valuation amount is reported from the perspective of the reporting counterparty, such that a positive number indicates that the valuation amount would be paid to Counterparty 1 and a negative number indicates that the valuation amount would be paid to Counterparty 2.</P>
+</BLOCK3>
+<BLOCK3><N>N.</N><TI>Position Level Data</TI>
+</BLOCK3>
+<BLOCK3><N>O.</N><TI>Anonymous Derivatives</TI>
+<P>36.1</P>
+<P>Could you please clarify what is an anonymous derivative?</P>
+<P>Section 36.1 applies to anonymous derivatives that are executed on a derivatives trading facility<FOOTNOTE><FREEFORM><P>References in this Notice to &ldquo;derivatives trading facility&rdquo; should be read as referring to, with respect to MI 96-101, a &ldquo;facility for trading derivatives&rdquo;.</P></FREEFORM></FOOTNOTE> and are intended to be cleared, where a counterparty does not know the identity of the other counterparty. We understand this may occur on swap execution facilities with central limit order books (<BOLD>CLOB</BOLD>) that facilitate trades on an anonymous basis.</P>
+<P>The concept of &ldquo;anonymous&rdquo; in section 36.1 is intended to align with that concept under CFTC regulatory requirements, including the Post-Trade Name Give-Up on Swap Execution Facilities Rule and proposed CFTC Data Element 147 <EM>SEF or DCM anonymous execution indicator</EM>. It is also intended to align with section 22.1 of the TR Rules and with CSA Data Element 23 <EM>Platform anonymous execution indicator</EM>.</P>
+<P>A derivatives trading facility does not have the reporting requirement unless the derivative is anonymous. If the derivative is not anonymous, it is required to be reported by the reporting counterparty under section 25.</P>
+<P>Is an unallocated derivative always anonymous, simply because a derivatives dealer does not know the identity of the funds to which the derivative will be allocated?</P>
+<P>No. An unallocated derivative is only anonymous if the pre-allocation parties to the &ldquo;block&rdquo; or &ldquo;bunched&rdquo; transaction (for example, the fund manager and dealer) are unknown to each other. It is not anonymous simply because the dealer does not know the identity</P>
+</BLOCK3>
+<BLOCK3><N>P.</N><TI>Unallocated Derivatives</TI>
+<P>25 and</P>
+<P>Could you please clarify reporting in relation to unallocated derivatives on a derivatives trading facility between a derivatives dealer and a fund manager, as agent?</P>
+<P>Not Anonymous</P>
+<P>CSA Staff's position is that the dealer should report the unallocated transaction with the person acting as agent on behalf of the parties to the transaction, typically a fund manager, based on the local counterparty jurisdiction of the dealer and the agent (and with respect to the agent, only to the extent practicable if the dealer has made a local counterparty determination with respect to the agent).</P>
+<P>For allocations that occur before clearing, the dealer should report allocations (as provided in the CSA Derivatives Data Technical Manual at Example 4.4) only to the extent it receives them. We understand that this may arise for pre-trade allocations before a bunched order is executed.</P>
+<P>For allocations that occur at the clearing agency, we expect the clearing agency to report the resulting cleared derivatives as allocated (using the &ldquo;CLAL&rdquo; value in the CSA Derivatives Data Technical Manual).</P>
+<P>Anonymous</P>
+<P>The derivatives trading facility reports the pre-allocation anonymous derivative with the agent, as provided under paragraph 36.1(4)(a). CSA Staff's position is that the derivatives trading facility should consider the &ldquo;local counterparty&rdquo; jurisdiction of the agent and the dealer for reporting purposes. We understand that allocation occurs at the clearing agency and would therefore be reported by the clearing agency (using the &ldquo;CLAL&rdquo; value in the CSA Derivatives Data Technical Manual).</P>
+<P>CSA Staff intend to review the TR Rules in this area and may recommend proposed amendments regarding unallocated and anonymous derivatives.</P>
+<P>Notwithstanding which entity reports the original derivative, the clearing agency is required to report the termination of the original derivative as provided in section 32(4) of the TR Rules.</P>
+</BLOCK3>
+<BLOCK3><N>Q.</N><TI>Effect of Amendments on Open Derivatives</TI>
+<P>Section 1.3 <EM>Historical Derivatives</EM> of the CSA Derivatives Data Technical Manual states: &ldquo;All existing derivatives should eventually be updated with the new data requirements and reported using the action field Modify MODI and event type Upgrade UP DT.&rdquo; Is this intended to indicate that reporting counterparties should upgrade existing reporting?</P>
+<P>We refer market participants to the detailed guidance that we provided on this subject in the CSA Summary of Comments and Responses10 that was published together with the amendments to the TR Rules. For clarity, we have reproduced this response here:
+<ITEM><P>&ldquo;For open derivatives on the date the amendments to the TR Rules take effect, any reporting that is required on or after this date must be reported as required under the amended TR Rules, but the amendments do not require any prior reporting to be upgraded. This means that:</P></ITEM>
+<ITEM><P>&bull; Creation data that is reported on or after the effective date of the amendments must be reported as required under the amended TR Rules. The technical specifications for this data should be consistent with the Technical Manual. However, creation data that was reported before the effective date of the amendments is not required to be upgraded even if the derivative remains outstanding on the effective date of the</P></ITEM>
+<ITEM><P>10 See here.</P></ITEM>
+<ITEM><P>amendments (subject to trade repository requirements as discussed below).</P></ITEM>
+<ITEM><P>Margin, valuation, and lifecycle event data that is reported on or after the effective date of the amendments must be reported as required under the amended TR Rules, even if the transaction was executed before the effective date of the amendments. The technical specifications for this data should be consistent with the Technical Manual. However, any valuation and lifecycle event data for the derivative that were required to be reported before the effective date of the amendments are not required to be upgraded.</P></ITEM>
+<ITEM><P>Position reporting is available, subject to the conditions in the TR Rules, in respect of any positions that are outstanding on or after the effective date of the amendments, even if the relevant transactions were executed before the effective date of the amendments.</P></ITEM>
+</P>
+<P>We note that the CFTC required creation data on existing derivatives to be reported according to their updated specifications. Because of this, we expect that reporting counterparties will already have updated the creation data for the majority of derivatives reportable in Canada at the time our amendments take effect. Therefore, we have not explicitly required this under the amendments. However, we recognize that trade repositories may find it inefficient and potentially costly to maintain separate creation data for existing derivatives according to the former rules and may require their participants to upgrade this creation data.&rdquo;</P>
+<P>In the event that a reporting counterparty does upgrade derivatives data, it should follow the guidance in section 1.3 of the CSA Derivatives Data Technical Manual.</P>
+<P>The reference to &ldquo;should eventually be updated&rdquo; was not intended to suggest a different position from what we indicated in the <EM>CSA Summary of Comments and Responses</EM>. Eventually, all open derivatives will expire or terminate, and all new derivatives booked after the amendments take effect will be reported under the updated data elements or will be upgraded in order to submit lifecycle events. In addition, we note that trade repositories may have required their participants to upgrade creation data on existing derivatives, for example, to report collateral and valuation data as required under the TR Rules.</P>
+</BLOCK3>
+<BLOCK3><N>R.</N><TI>Data Elements</TI>
+<P>App. A</P>
+<P>Certain data elements under Section 2 of the CSA Derivatives Data Technical Manual are indicated as &ldquo;O&rdquo; (for &ldquo;Optional&rdquo;) under the &ldquo;Validations&rdquo; column. Does &ldquo;Optional&rdquo; mean that the reporting counterparty may decide not to report the data element, even if it is applicable to the derivative?</P>
+<P>We refer reporting counterparties to the provisions at the beginning of Appendix A to the TR Rules: &ldquo;the reporting counterparty is required to provide a response for each data element unless the data element is not applicable to the derivative.&rdquo; Similarly, the CSA Derivatives Data Technical Manual provides at Section 1.2.5 under the heading &ldquo;Values&rdquo;, for &ldquo;Optional&rdquo;: &ldquo;The data element should be included in the transaction if applicable.&rdquo;</P>
+<P>&ldquo;Optional&rdquo; in the context of validations means that the trade repository should not require the data element to be populated under its validation procedure. This is designed so that a derivative for which the data element is not applicable does not fail the validation procedure. For instance, not all data elements apply to all types of derivatives. However, if the data element is applicable to the derivative, it is mandatory for the reporting counterparty to report the data element even though it is labelled optional for the purpose of the validation procedure.</P>
+<P>A reporting counterparty must also not rely on the specifications of its trade repository in determining mandatory and optional data elements. Instead, a reporting counterparty should review the data elements in the context of the requirements of the TR Rules to ensure that it reports all data elements that are applicable to each derivative that it reports.</P>
+<P>Data</P>
+<P>Element <EM># 22</EM></P>
+<P>Data Element <EM># 22 Platform identifier </EM>refers to the identifier of the trading facility on which the transaction was executed. What should reporting counterparties consider when reporting this data element? Why is this information required by the CSA?</P>
+<P>When reporting Data Element <EM>#22,</EM> the identifier should correspond to the exact trading facility on which the transaction was executed, and not the parent, affiliate or other affiliated trading facility.</P>
+<P>Also, this data element should not be used to report the name of a bank. A bank would be a counterparty to a derivative, rather than a platform. The concept of &ldquo;platform&rdquo; in Data Element #22 is intended to align with the definition of &ldquo;facility for trading derivatives&rdquo; as defined in <EM>MI 96-101</EM> and &ldquo;derivatives trading facility&rdquo; as set out in the Companion Policy in the other TR Rules.</P>
+<P>If a derivatives trading facility provides access to a participant in a Canadian jurisdiction, it may be carrying on business in that jurisdiction and may be subject to requirements of applicable legislation that mandate recognition as an exchange or registration as an alternative trading system, depending on Canadian requirements relating to the services they provide to Canadian participants. CSA Staff intend to monitor this data element with a view to ensuring that derivatives trading facilities that provide access to Canadian participants are operating in accordance with Canadian requirements.</P>
+<P>CSA Staff also note that certain counterparties may also be subject to requirements of their prudential regulator to manage third party risk, which may include risk associated with trading on platforms that are not operating in compliance with securities legislation.</P>
+<P>Element</P>
+<P>#106</P>
+<P>What is Data Element <EM>#</EM> 106 <EM>Last floating reference value?</EM></P>
+<P>The CSA Derivatives Data Technical Manual describes this data element as the most recent sampling of the value of the floating reference for the purposes of determining cash flow. The floating price reference is used to calculate the most recent settlement under a transaction. For example, if the transaction is a monthly settled AECO fixed for float swap and the AECO price used to calculate the prior month's settlement was $2.50, the last floating reference value would be $2.50.</P>
+<P><EM>#95</EM></P>
+<P>Can reporting counterparties populate Data Element #95 <EM>Event timestamp</EM> with a value within 15 minutes of submission, consistent with CFTC specifications, and use Data Element <EM>#</EM> 12 <EM>Effective date</EM> to populate the future date on which the event takes effect, if applicable? Reporting a future date under Data Element #95 would conflict with current trade repository validations that are designed to reject values that are greater than 15 minutes after submission.</P>
+<P>Yes. Reporting counterparties may report format and values in respect of future events using an approach that aligns with CFTC reporting until the CFTC implements updated specifications to align with revised CDE Technical Guidance. We anticipate updating the CSA Derivatives Data Technical Manual to provide further guidance.</P>
+<P>#136</P>
+<P>Under Data Element #136 <EM>Other payment amount</EM>, what should be reported in the context of an early termination of the derivative (&ldquo;UWIN&rdquo; as noted in the values column of the CSA Derivatives Data Technical Manual for Data Element <EM>#</EM> 141)? Should this include realized profits or losses arising from the derivative?</P>
+<P>No. In the context of an early termination, this data element is generally intended to cover only payments associated with the early termination. This would not include the profit or loss of the derivative.</P>
+</BLOCK3>
+<BLOCK3><N>S.</N><TI>Reportable Derivatives</TI>
+<P>n/a</P>
+<P>Are package foreign exchange spot transactions required to be reported under the TR Rules?</P>
+<P>We understand a package foreign exchange spot transaction to have the following features:
+<ITEM><P>two separate contracts are entered into as a package, in the sense that execution of one contract is contingent on execution of the other, and the component contracts are quoted or priced together as one economic transaction with (nearly) simultaneous execution of both contracts;</P></ITEM>
+<ITEM><P>the two separate contracts are each executed, confirmed and settled separately, where performance of one is not contingent on performance of the other (in contrast to two legs of a single derivative such as a foreign exchange swap);</P></ITEM>
+<ITEM><P>each contract settles via an actual delivery of the relevant currencies within two business days.</P></ITEM>
+</P>
+<P><EM>MI 91-101</EM> Derivatives: Product Determination, MSC Rule 91-506 Derivatives: Product Determination, OSC Rule 91-506 Derivatives: Product Determination, and Regulation 91-506 respecting Derivatives Determination (Quebec) (collectively, the &ldquo;<BOLD>Scope Rules</BOLD>&rdquo;) provide for an exclusion in respect of a contract or instrument for the purchase and sale of a currency that (subject to certain conditions) settles within two business days.</P>
+<P>CSA Staff's view is that, based on a plain language interpretation, this exclusion under the Scope Rules applies separately to each such separate contract within a package foreign exchange spot transaction, subject to the conditions of the exclusion. As a result, CSA Staff's view is that they are excluded from the TR Rules, consistent with Part II of CFTC Letter 25-10.</P>
+</BLOCK3>
+<BLOCK3><N>T.</N><TI>Jurisdiction</TI>
+<P>1(1)</P>
+<P>Is it possible for an entity to be a &ldquo;local counterparty&rdquo; for certain derivatives, but not for other derivatives (for example, depending on asset class)?</P>
+<P>No. Either an entity is a local counterparty or it is not.</P>
+<P>If the jurisdiction of a &ldquo;local counterparty&rdquo; changes before a derivative has expired or terminated, is the change in jurisdiction required to be reported?</P>
+<P>Yes. A change in jurisdiction of a local counterparty is a lifecycle event because it is a change in creation data (Data Element # 10 or # 11). These data elements enable the appropriate regulator to access relevant data from the trade repository and exercise its mandate. We intend to provide more detailed guidance in the CSA Derivatives Data Technical Manual on how to report changes to Data Elements # 10 or #11.</P>
+<P>41.2(2)</P>
+<P>of AMF</P>
+</BLOCK3>
+</BLOCK2>
+<BLOCK2><TI>91-507, MSC 91-</TI>
+</BLOCK2>
+<BLOCK2><TI>507, OSC 91-507</TI>
+<P>42(2) of MI 96-101</P>
+<P>How should market participants determine where an individual is a &ldquo;resident&rdquo;? An individual may have multiple residences.</P>
+<P>The term &ldquo;resident&rdquo; in these provisions was deliberately not defined to avoid increasing regulatory burden for reporting counterparties by necessitating a specific outreach to determine residence. Reporting counterparties may use residential address information collected through existing AML/KYC documentation. Also, where reporting counterparties ascertain an individual's province or territory to determine the applicable registration and/or prospectus exemptions that may apply in the individual's province or territory (e.g. accredited counterparty, accredited investor, qualified party), the relevant province or territory for reporting purposes may be in accordance with that determination.</P>
+<P>Section 1(1)</P>
+<P>What is the &ldquo;local counterparty&rdquo; jurisdiction of a branch of a bank?</P>
+<P>A branch is not a legal entity. We expect the counterparty to a derivative to be the bank itself, rather than a branch of the bank. While branches are relevant to reporting frameworks in some other jurisdictions, they are not relevant to the TR Rules. Care should be taken in reporting the LEI of the bank itself under the TR Rules, rather than that of a branch of the bank.</P>
+<P>Is a Canadian province, territory, or municipality a local counterparty?</P>
+<P>Yes. His Majesty the King in right of Canada is a local counterparty in Ontario. A province or territory (including His Majesty the King in right of the province or territory) is a local counterparty in the province or territory. A municipal government is a local counterparty in the province or territory of its location. A government agency is a local counterparty typically in the jurisdiction of its government.</P>
+<P>Section 41 of the TR Rules provide different exemptions for certain governments and government agencies from reporting requirements, but these do not exempt derivatives dealers from their own reporting requirements in respect of derivatives that they enter into with a counterparty that is a government or government agency.</P>
+<P>For example, if a foreign derivatives dealer enters into a derivative with His Majesty the King in right of Canada, the derivatives dealer is required to report the derivative under OSC 91-507. Similarly, if a derivatives dealer that is a local counterparty in Ontario enters into a derivative with the Province of Quebec, the derivatives dealer is required to report the derivative under AMF 91-507 and OSC 91-507.</P>
+<P>The purpose of reporting derivatives entered into with governments and government agencies is to ensure that regulators have appropriate oversight of derivatives dealers and a complete and accurate assessment of potential risks (including market risk, counterparty risk, and systemic risk) in all relevant jurisdictions, consistent with our mandates.</P>
+<BLOCK3><N>U.</N><TI>Public Dissemination</TI>
+<P>starting with &ldquo;EUR-EURIBOR&rdquo; or &ldquo;EUR- EURIBOR-Telerate&rdquo; all need be disseminated?</P>
+<P>CSA Staff anticipate proposing further amendments to the TR Rules relating to public dissemination.</P>
+<P>39(3)</P>
+<P>Under the <EM>Securities Act</EM> (Ontario), derivatives with certain government entities are excluded from public dissemination of transaction level data. What are the excluded entities and how does this affect transaction level public dissemination under the other TR Rules?</P>
+<P>Under subsection 142(3) of the <EM>Securities Act</EM>, subsection 39(3) of OSC Rule 91-507 does not apply to derivatives traded by certain government entities. This means that derivatives with these entities are not required to be publicly disseminated for transaction level public dissemination under OSC 91-507. This exclusion has existed since public dissemination commenced in 2016. Staff note that this exclusion does not apply to reporting under subsection 26(1) or to aggregate level public dissemination under subsection 39(1).</P>
+<P>For convenience, OSC Staff have listed the following entities that we believe to be covered by this exclusion and that have LEIs:
+<ITEM><P>His Majesty the King in right of Canada 4BFD7AQU0A75QLAHK410</P></ITEM>
+<ITEM><P>His Majesty the King in Right of the Province of British Columbia</P></ITEM>
+<ITEM><P>54930058TO7MEKUHWL16</P></ITEM>
+<ITEM><P>His Majesty in right of Alberta LQPXMHHNJKIPJYE53543</P></ITEM>
+<ITEM><P>Province of Saskatchewan</P></ITEM>
+<ITEM><P>549300FKDIB7OJMBSP83</P></ITEM>
+<ITEM><P>Province of Manitoba</P></ITEM>
+<ITEM><P>5493003QILFOB3JRKE30</P></ITEM>
+<ITEM><P>His Majesty the King in right of Ontario C7PVKCRGLG18EBQGZV36</P></ITEM>
+<ITEM><P>Province of Quebec</P></ITEM>
+<ITEM><P>549300WN65YFEQH74Y36</P></ITEM>
+<ITEM><P>Province of New Brunswick 549300POZA55ZTGSOU44</P></ITEM>
+<ITEM><P>His Majesty the King in Right of the Province of Nova Scotia</P></ITEM>
+<ITEM><P>5493002W033HJBDP3481</P></ITEM>
+<ITEM><P>Government of the Province of Prince Edward Island, Department of Finance 549300L826JG01X2QH35</P></ITEM>
+<ITEM><P>Government of Newfoundland and Labrador</P></ITEM>
+<ITEM><P>549300CLWWW48GTPOJ49</P></ITEM>
+<ITEM><P>Government of the Northwest Territories</P></ITEM>
+<ITEM><P>549300MHKRYWVMMSH566</P></ITEM>
+<ITEM><P>Metrolinx</P></ITEM>
+<ITEM><P>549300IS34S901EOZB45</P></ITEM>
+<ITEM><P>Ontario Electricity Financial Corporation 549300SI5D7OIEG4Y641</P></ITEM>
+</P>
+<P>CSA Staff are not aware of comparable exclusions in other CSA jurisdictions. As a result, we note that transaction level public dissemination may be required under another TR Rule even where it is not required in Ontario. For example, if a derivatives dealer that is a local counterparty in Quebec enters into a derivative with His Majesty the King in right of Ontario, the derivative remains subject to transaction level public dissemination under subsection 39(3) of AMF 91-507. Similarly, if a derivatives dealer that is a local counterparty in Ontario enters into a derivative with the Province of Saskatchewan, the derivative remains subject to transaction level public dissemination under subsection 39(3) of <EM>MI 96-101</EM> in Saskatchewan.</P>
+<P>Each trade repository has a single transaction level public dissemination for Canada, rather than separate dissemination for each province or territory. Therefore, even where transaction level public dissemination is not required under OSC 91-507, CSA Staff expect it to occur where required under any of the other TR Rules. To this end, OSC Staff's view is that subsection 142(3) of the <EM>Securities Act</EM> (Ontario) does not prohibit transaction level public dissemination; rather, it operates as an exclusion from the requirement in Ontario.</P>
+<P>CSA Staff note that only certain derivatives are subject to transaction level public dissemination under the TR Rules, and that these remain subject to various protections, including masking, rounding, capping and a 48-hour delay.</P>
+</BLOCK3>
+</BLOCK2>
+<BLOCK2><TI>Questions</TI>
+<P>If you have questions about this CSA Staff Notice, please contact any of the following:
+<P1>
+<LINE>Dominique Martin</LINE>
+<LINE>Senior Director,</LINE>
+<LINE>Market Activities and Derivatives</LINE>
+<LINE>Autorit&eacute; des march&eacute;s financiers 514-395-0337, ext. 4351</LINE>
+<LINE><EM>dominique.martin@lautorite.qc.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Michael Brady</LINE>
+<LINE>Deputy Director, <EM>Capital Markets Regulation</EM></LINE>
+<LINE>British Columbia Securities Commission</LINE>
+<LINE>604-899-6561</LINE>
+<LINE><EM>mbrady@bcsc.bc.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Janice Cherniak</LINE>
+<LINE>Senior Legal Counsel, <EM>Market Regulation</EM></LINE>
+<LINE>Alberta Securities Commission</LINE>
+<LINE>403-355-4864</LINE>
+<LINE><EM>janice.cherniak@asc.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Greg Toczylowski</LINE>
+<LINE>Associate Vice President</LINE>
+<LINE>Trading &amp; Markets&mdash;Derivatives</LINE>
+<LINE>Ontario Securities Commission 416-593-8215</LINE>
+<LINE><EM>gtoczylowski@osc.gov.on.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Leigh-Anne Mercier</LINE>
+<LINE>General Counsel</LINE>
+<LINE>Manitoba Securities Commission</LINE>
+<LINE>204-945-0362</LINE>
+<LINE><EM>leigh-Anne.Mercier@gov.mb.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Abel Lazarus</LINE>
+<LINE>Director, Corporate Finance</LINE>
+<LINE>Nova Scotia Securities Commission</LINE>
+<LINE>902-424-6859</LINE>
+<LINE><EM>abel.lazarus@novascotia.ca</EM></LINE>
+</P1>
+<P1>
+<LINE>Sonne Udemgba</LINE>
+<LINE>Director, Legal</LINE>
+<LINE>Securities Division</LINE>
+<LINE>Financial and Consumer Affairs Authority of</LINE>
+<LINE>Saskatchewan</LINE>
+<LINE>306-787-5879</LINE>
+<LINE>Michael Melvin</LINE>
+<LINE>Senior Securities Analyst</LINE>
+<LINE>Financial and Consumer Services Commission of</LINE>
+<LINE>New Brunswick</LINE>
+<LINE>506-643-7690</LINE>
+<LINE><EM>michael.melvin@fcnb.ca</EM></LINE>
+</P1>
+<P1>
+<LINE><EM>sonne.udemgba@gov.sk.ca</EM></LINE>
+</P1>
+</P>
+</BLOCK2>
+</FREEFORM>
+</POLIDOC>

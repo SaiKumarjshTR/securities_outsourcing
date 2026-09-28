@@ -25,6 +25,9 @@ build/
 *.docx
 *.pdf
 *.log
+# Golden-file regression fixtures ARE meant to be committed (see tests/test_golden.py)
+!tests/golden/**/*.docx
+!tests/golden/**/*.sgm
 
 # ── Data (large files) — add selectively ─────────────────────────────────────
 data/chroma_db/

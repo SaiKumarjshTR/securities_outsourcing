@@ -1,7 +1,7 @@
 # batch_runner_deploy.py - Linux/Docker safe deployment build.
 # Generated from batch_runner_standalone.py by sync_to_deploy.py.
 # All Windows-specific paths replaced with env-var driven config.
-# PDF->DOCX via FRS14 HTTP bridge (frs14_bridge.py) -- no win32com needed.
+# win32com (ABBYY) guarded with try/except - returns None on Linux.
 # Notebook-only cells (CELL 16+) stripped - not needed in production.
 #
 import os
@@ -16,8 +16,14 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from collections import defaultdict
 
-# win32com removed — PDF→DOCX now handled by the FRS14 HTTP bridge (frs14_bridge.py).
-# The bridge runs on the Windows FRS14 machine; this client works on any OS.
+# ABBYY - Windows-only (ABBYY FineReader Engine 12).
+# On Linux/Docker this is stubbed via pipeline_runner._install_win32com_stub().
+try:
+    import win32com.client as win32c
+    _WIN32_AVAILABLE = True
+except ImportError:
+    win32c = None  # type: ignore[assignment]
+    _WIN32_AVAILABLE = False
 
 # DOCX
 from docx import Document
@@ -45,18 +51,18 @@ print(f"\U0001f4c5 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 # are used only when running the script directly (e.g. local testing).
 # ---------------------------------------------------------------------------
 
-# FRS14 HTTP bridge — PDF→DOCX via ABBYY FineReader Server 14 over the network.
-# Set FRS14_SERVER_URL to the Windows host running frs14_bridge.py.
-FRS14_CONFIG = {
-    'server_url': os.getenv('FRS14_SERVER_URL', 'http://localhost:7090'),
-    'timeout':    int(os.getenv('FRS14_TIMEOUT', '300')),
+# ABBYY - disabled in container (no Windows COM server on Linux).
+ABBYY_CONFIG = {
+    'customer_id':      os.getenv('ABBYY_CUSTOMER_ID', 'FFvrEyp5Gz8sXSwP98N9'),
+    'license_path':     os.getenv('ABBYY_LICENSE_PATH', ''),    # Windows-only, N/A in Docker
+    'license_password': os.getenv('ABBYY_LICENSE_PASSWORD', '/80HjebrjO2bzpJUiJ/DwQ=='),
 }
 
 # Thomson Reuters AI Platform
 WORKSPACE_ID    = os.getenv('WORKSPACE_ID', 'Saikumar3Y0Z')
 TR_AUTH_URL     = os.getenv('TR_AUTH_URL', 'https://aiplatform.gcs.int.thomsonreuters.com/v1/anthropic/token')
 ANTHROPIC_MODEL = os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-5-20250929')
-OPUS_MODEL      = os.getenv('OPUS_MODEL', 'claude-opus-4-20250514')
+OPUS_MODEL      = os.getenv('OPUS_MODEL', 'claude-opus-4-5')
 
 # Runtime paths - overridden per-request by pipeline_runner.run_pipeline()
 _DEFAULT_TEMP = os.getenv('TEMP_DIR', '/tmp/sgml_pipeline')
@@ -87,8 +93,13 @@ def _discover_vendor_sgms(vendor_dir: str) -> list:
     # Auto-discover all .sgm files in the vendor SGMs directory.
     p = Path(vendor_dir)
     if not p.exists():
+        # Was silent — a missing dir here means RAG initializes with zero vendor
+        # examples/keying rules and no one notices. Make it loud.
+        print(f"⚠️  VENDOR SGMS DIR NOT FOUND: {vendor_dir} — RAG examples will be EMPTY")
         return []
-    return sorted(str(f) for f in p.rglob('*.sgm'))
+    files = sorted(str(f) for f in p.rglob('*.sgm'))
+    print(f"📚 Vendor SGMs discovered: {len(files)} from {vendor_dir}")
+    return files
 
 RAG_CONFIG = {
     'enabled':     os.getenv('RAG_ENABLED', 'true').lower() == 'true',
@@ -240,8 +251,23 @@ class RAGManager:
         self._initialized = True
         print(f"  RAG ready — {self._rules.count()} rule chunks, {self._examples.count()} examples")
 
-    def get_context_for_batch(self, batch_texts: List[str]) -> str:
-        """Return a concise context string for the given batch of paragraph texts."""
+        # FIX (2026-08-21): "RAG: ENABLED" used to print even when the index stayed empty
+        # (bad keying_specs_path, empty vendor_sgms list) — every retrieval then silently
+        # returned "" with no error. Fail loud here so the caller's try/except disables RAG
+        # instead of running the whole batch with unnoticed zero augmentation.
+        if self._rules.count() == 0 or self._examples.count() == 0:
+            raise RuntimeError(
+                f"RAG index empty after initialize() — rules={self._rules.count()}, "
+                f"examples={self._examples.count()}. Check keying_specs_path/vendor_sgms paths."
+            )
+
+    def get_context_for_batch(self, batch_texts: List[str], include_rules: bool = True,
+                               include_examples: bool = True, exclude_source: str = None) -> str:
+        """Return a concise context string for the given batch of paragraph texts.
+        include_rules/include_examples let a caller that already has the full keying
+        spec elsewhere skip the redundant rule-chunk retrieval. exclude_source drops
+        a specific vendor SGM filename from the examples match (e.g. the document
+        currently being converted, to avoid it retrieving its own vendor answer)."""
         if not self._initialized:
             return ""
         # Build query from first 3 paragraphs (up to 150 chars each)
@@ -249,22 +275,25 @@ class RAGManager:
         parts: List[str] = []
 
         # ── Keying rules ──────────────────────────────────────────────
-        n_r = min(self.n_rules, self._rules.count())
-        if n_r > 0:
-            res = self._rules.query(query_texts=[query], n_results=n_r)
-            if res and res["documents"]:
-                parts.append("RELEVANT KEYING RULES:")
-                for doc in res["documents"][0]:
-                    parts.append(f"  {doc[:500]}")
+        if include_rules:
+            n_r = min(self.n_rules, self._rules.count())
+            if n_r > 0:
+                res = self._rules.query(query_texts=[query], n_results=n_r)
+                if res and res["documents"]:
+                    parts.append("RELEVANT KEYING RULES:")
+                    for doc in res["documents"][0]:
+                        parts.append(f"  {doc[:500]}")
 
         # ── Vendor examples ───────────────────────────────────────────
-        n_e = min(self.n_examples, self._examples.count())
-        if n_e > 0:
-            res = self._examples.query(query_texts=[query], n_results=n_e)
-            if res and res["documents"]:
-                parts.append("\nSIMILAR VENDOR EXAMPLES (tag → text):")
-                for doc in res["documents"][0]:
-                    parts.append(f"  {doc[:300]}")
+        if include_examples:
+            n_e = min(self.n_examples, self._examples.count())
+            if n_e > 0:
+                _where = {"source": {"$ne": exclude_source}} if exclude_source else None
+                res = self._examples.query(query_texts=[query], n_results=n_e, where=_where)
+                if res and res["documents"]:
+                    parts.append("\nSIMILAR VENDOR EXAMPLES (tag → text):")
+                    for doc in res["documents"][0]:
+                        parts.append(f"  {doc[:300]}")
 
         return "\n".join(parts)
 
@@ -558,7 +587,8 @@ class ParagraphData:
     confidence: float = 0.0
     inline_formatting: List[Dict] = field(default_factory=list)
     skip: bool = False  # Ã¢â€ Â THIS IS THE CRITICAL LINE
-    docx_formatting: List[Dict] = field(default_factory=list)  # Ã¢â€ Â For Phase 3
+    docx_formatting: List[Dict] = field(default_factory=list)  # For Phase 3
+    from_table_cell: bool = False  # synthesized from a table cell -- never promote to heading  # Ã¢â€ Â For Phase 3
 
 @dataclass
 class TableData:
@@ -576,68 +606,103 @@ class ImageData:
 
 print('Ã¢Å“â€¦ Data structures defined (with skip and docx_formatting fields)')
 
-class FRS14Converter:
-    """
-    ABBYY FineReader Server 14 -- HTTP bridge client.
-
-    Replaces the Windows-only ABBYYConverter (FineReader Engine 12 Desktop SDK).
-    Calls a lightweight HTTP bridge (frs14_bridge.py) running on the Windows FRS14
-    machine. Fully cross-platform -- works unchanged on Ubuntu/Plexus.
-
-    Configure via FRS14_CONFIG dict or environment variables:
-      FRS14_SERVER_URL  -- base URL of the bridge, e.g. http://192.168.1.10:7090
-      FRS14_TIMEOUT     -- per-request timeout in seconds (default 300)
-    """
-
-    def __init__(self, server_url: str = None, timeout: int = 300):
-        self.server_url = (server_url or os.getenv('FRS14_SERVER_URL', 'http://localhost:7090')).rstrip('/')
-        self.timeout = timeout or int(os.getenv('FRS14_TIMEOUT', '300'))
-
+class ABBYYConverter:
+    """ABBYY FineReader Engine 12 - DevCode proven approach"""
+    
+    FEF_DOCX = 8
+    
+    def __init__(self, customer_id: str, license_path: str, license_password: str):
+        self.engine_loader = None
+        self.engine = None
+        self.customer_id = customer_id
+        self.license_path = license_path
+        self.license_password = license_password
+    
     def initialize(self):
-        print("\n[FRS14] Connecting to bridge...")
-        try:
-            r = requests.get(f'{self.server_url}/health', timeout=10)
-            r.raise_for_status()
-            info = r.json()
-            print(f"   OK -- FRS14 bridge ready: {self.server_url}  (frs14={info.get('frs14', 'ok')})")
-        except Exception as e:
-            raise RuntimeError(f"FRS14 bridge not reachable at {self.server_url}: {e}")
-
-    def _convert(self, pdf_path: str, out_path: str, output_format: str) -> bool:
-        """POST pdf_path to /convert, save response bytes to out_path."""
-        try:
-            with open(pdf_path, 'rb') as fh:
-                r = requests.post(
-                    f'{self.server_url}/convert',
-                    files={'file': (Path(pdf_path).name, fh, 'application/pdf')},
-                    data={'output_format': output_format},
-                    timeout=self.timeout,
-                )
-            if r.status_code != 200:
-                print(f"   [FRS14] Error {r.status_code}: {r.text[:200]}")
-                return False
-            Path(out_path).write_bytes(r.content)
-            size = os.path.getsize(out_path) / 1024
-            print(f"   OK -- {output_format}: {size:.1f} KB")
-            return True
-        except Exception as e:
-            print(f"   [FRS14] Error: {e}")
-            return False
-
+        print("\nÃ°Å¸â€Â§ Initializing ABBYY...")
+        self.engine_loader = win32c.Dispatch("FREngine.OutprocLoader.12")
+        self.engine = self.engine_loader.InitializeEngine(
+            self.customer_id, self.license_path, self.license_password, "", "", False
+        )
+        self.engine.LoadPredefinedProfile("DocumentConversion_Accuracy")
+        print("   Ã¢Å“â€¦ ABBYY initialized")
+    
     def convert_pdf_to_docx(self, pdf_path: str, docx_path: str) -> bool:
-        print(f"\n[FRS14] Converting PDF to DOCX...")
+        print(f"\nÃ°Å¸â€œâ€ž Converting PDF to DOCX...")
         print(f"   Input: {Path(pdf_path).name}")
-        return self._convert(pdf_path, docx_path, 'DOCX')
+        
+        try:
+            document = self.engine.CreateFRDocument()
+            print("   Loading PDF...")
+            document.AddImageFile(pdf_path, None, None)
+            
+            print("   Processing...")
+            start = time.time()
+            document.Process(None)
+            print(f"   Ã¢Å“â€¦ Processed in {time.time()-start:.1f}s")
+            
+            export_params = self.engine.CreateRTFExportParams()
+            export_params.PictureExportParams.Resolution = 300
+            export_params.BackgroundColorMode = 1
+            # PageSynthesisMode=1: column-aware synthesis (default for FRE12)
+            # Mode=0 caused wrong reading order in multi-column docs (31-367 -26%)
+            export_params.PageSynthesisMode = 1
+            export_params.KeepPageBreaks = 1
+            export_params.UseDocumentStructure = True
+            # Suppress running titles (page headers/footers) to reduce
+            # body-text noise and fix score degradation on long docs
+            try:
+                export_params.WriteRunningTitles = False
+            except AttributeError:
+                pass  # Older SDK versions without this attribute
+            
+            print("   Exporting DOCX...")
+            document.Export(docx_path, self.FEF_DOCX, export_params)
+            document.Close()
+            
+            if os.path.exists(docx_path):
+                size = os.path.getsize(docx_path) / 1024
+                print(f"   Ã¢Å“â€¦ DOCX: {size:.1f} KB")
+                return True
+            return False
+        except Exception as e:
+            print(f"   Ã¢ÂÅ’ Error: {e}")
+            return False
+    
 
     def convert_pdf_to_html(self, pdf_path: str, html_path: str) -> bool:
-        """Export HTML preserving <sup> footnote markers (secondary pass)."""
-        print(f"   [FRS14] Exporting HTML for footnote-anchor detection...")
-        return self._convert(pdf_path, html_path, 'HTML')
+        """Export ABBYY HTML preserving <sup> footnote markers.
+
+        ABBYY HTML output contains <sup>i</sup> through <sup>xi</sup>
+        inline markers that DOCX export loses. Used as a secondary pass
+        for docs needing correct footnote position detection.
+        """
+        print(f"   Exporting HTML for footnote-anchor detection...")
+        try:
+            document = self.engine.CreateFRDocument()
+            document.AddImageFile(pdf_path, None, None)
+            import time as _t; _s = _t.time()
+            document.Process(None)
+            print(f"   Processed in {_t.time()-_s:.1f}s")
+            html_params = self.engine.CreateHTMLExportParams()
+            document.Export(html_path, 1, html_params)  # FEF_HTML = 1
+            document.Close()
+            if os.path.exists(html_path):
+                size = os.path.getsize(html_path) / 1024
+                print(f"   HTML: {size:.1f} KB")
+                return True
+            return False
+        except Exception as e:
+            print(f"   HTML export error: {e}")
+            return False
 
     def cleanup(self):
-        pass  # No COM resources to release
+        if self.engine_loader:
+            self.engine_loader.ExplicitlyUnload()
+            print("   Ã¢Å“â€¦ ABBYY cleaned up")
 
-print('FRS14Converter defined')
+print("Ã¢Å“â€¦ ABBYYConverter defined")
+
 class ImageExtractor:
     """Extract images from DOCX and save as BMP"""
     
@@ -775,6 +840,16 @@ class CompleteDOCXExtractor:
         ('CP',  re.compile(r'^CP\s+\d', re.I)),
     ]
 
+    # Common bold, standalone, single/short-word section headings in CSA/securities
+    # notices — never decorative cover-page filler, so exempt from the short-paragraph
+    # cover-zone skip regardless of position (see _detect_cover_page).
+    _SHORT_HEADING_WORDS = {
+        'introduction', 'purpose', 'background', 'summary', 'overview', 'application',
+        'definitions', 'interpretation', 'conclusion', 'comments', 'discussion',
+        'analysis', 'recommendation', 'scope', 'objective', 'objectives', 'rationale',
+        'next steps', 'questions', 'contents', 'annex', 'schedule', 'appendix',
+    }
+
     def __init__(self, docx_path: str, pdf_path: str = None):
         self.docx_path = docx_path
         self.pdf_path = pdf_path   # Optional: used for PyMuPDF endnote supplementation
@@ -786,6 +861,18 @@ class CompleteDOCXExtractor:
         self._inline_footnotes, self._inline_fn_para_idx = self._load_inline_footnotes()
         self._numbering: Dict = self._load_numbering()   # {numId: {ilvl: (numFmt, lvlText, start)}}
         self._num_counters: Dict = {}                    # {(numId, ilvl): current_count}
+        # FIX (2026-08-25): {(numId, ilvl): bool} -- was the LAST paragraph processed for this
+        # numbering key one whose OWN literal text already looked like a sub-item bracket label
+        # (e.g. "(1) ...", "2) ...")? Confirmed real-world case (11-349, business-reported "3 was
+        # changed to 4"): a run of consecutive paragraphs sharing one numId/ilvl can be siblings
+        # under the SAME outer item ("(1)", then "(2)", both continuing outer item "2") rather than
+        # each starting a fresh outer item -- see _get_numpr_label for the counter-suppression logic.
+        self._num_last_subitem: Dict = {}
+        # Tracks the most recent "PART N" heading seen while walking paragraphs in order.
+        # Word gives multilateral instruments a fresh numId per Part, so the outer-level
+        # counter for a multi-level decimal list (e.g. "25.01") never increments on its
+        # own — this lets _get_numpr_label seed it with the real Part number instead.
+        self._current_part_num: Optional[int] = None
 
     def _load_numbering(self) -> Dict:
         """Load word/numbering.xml → {numId: {ilvl: (numFmt, lvlText, start)}}.
@@ -876,10 +963,21 @@ class CompleteDOCXExtractor:
                 n -= v
         return result
 
-    def _get_numpr_label(self, para_el) -> str:
+    def _get_numpr_label(self, para_el, raw_text: str = '') -> str:
         """Return the auto-generated list label for a paragraph with <w:numPr>.
         Increments the appropriate counter and resets deeper-level counters.
-        Returns '' when no numPr, bullet format, or numbering not found."""
+        Returns '' when no numPr, bullet format, or numbering not found.
+
+        raw_text (added 2026-08-25): the paragraph's own literal text (before any label is
+        prepended). Used only to detect a specific real pattern -- a run of consecutive
+        paragraphs sharing one numId/ilvl whose OWN text already starts with a sub-item
+        bracket like "(1) ..." / "2) ...". Such paragraphs are siblings under the SAME outer
+        item (e.g. "2(1) ..." then "(2) ..."), not each their own fresh outer item, so the
+        outer counter must not advance again for the second and later paragraphs in the run.
+        Confirmed via the business-reported "3 was changed to 4" example (11-349): without this,
+        a 4-paragraph run (cite clause, "(1)...", "(2)...", "coming into force") advances the
+        counter 1/2/3/4 instead of the correct 1/2/2/3.
+        """
         _W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
         try:
             pPr = para_el.find(f'{_W}pPr')
@@ -905,13 +1003,50 @@ class CompleteDOCXExtractor:
             # Skip non-numbered formats (bullets, none, ordinal symbols)
             if numFmt in ('bullet', 'none', ''):
                 return ''
+            # FIX (2026-08-22): some ABBYY-produced DOCX numbering.xml definitions embed
+            # a malformed literal prefix baked into the lvlText template itself, e.g.
+            # "(3.(%1)" or "(i.(%1)" instead of a clean "(%1)" -- confirmed via direct
+            # numbering.xml inspection on the business-reported "(3.1) -> (3.(1)" example
+            # (11-349.docx numId=19, lvlText literally "(3.(%1)" in the source file) and a
+            # second instance ("(i.(%1)", numId=17). This is baked into the DOCX's own
+            # list template by whatever produced it (not something our label logic
+            # invents -- our code was correctly substituting %1 into a broken template),
+            # but the obviously-malformed shape can still be detected and repaired.
+            import re as _nr2
+            _malformed_m = _nr2.match(r'^\(([a-zA-Z0-9]{1,3})\.\((%\d+)\)$', lvlText)
+            if _malformed_m:
+                lvlText = f'({_malformed_m.group(2)})'
+            # FIX Issue 4 (refined): child items in a multi-level decimal list (e.g.
+            # "25.01") are only numPr'd at the inner ilvl — the outer/Part counter
+            # (numId, 0) is never incremented by any paragraph, so its %1 lookup falls
+            # back to the hardcoded default of 1, producing "1.01" instead of "25.01"
+            # for every Part (confirmed BIZ_02 root cause, e.g. NFLD/133 "25.01 → 1").
+            # Previously this returned '' (no label at all) unconditionally. Fix: when we
+            # know the real PART number from document context, seed the outer counter
+            # with it directly instead of discarding the label.
+            import re as _nr2
+            if numFmt == 'decimal' and len(_nr2.findall(r'%\d+', lvlText)) > 1:
+                if self._current_part_num is None:
+                    return ''   # no context to correct the outer counter — old behaviour
+                self._num_counters[(numId, 0)] = self._current_part_num
             # Increment counter for this level; reset deeper levels (same numId)
             key = (numId, ilvl)
             for k in [k for k in self._num_counters if k[0] == numId and k[1] > ilvl]:
                 del self._num_counters[k]
             if key not in self._num_counters:
                 self._num_counters[key] = start - 1
-            self._num_counters[key] += 1
+            # FIX (2026-08-25): a paragraph whose OWN literal text already starts with a
+            # sub-item bracket ("(1) ...", "2) ...") is a SIBLING continuing the previous
+            # such paragraph's outer item, not a fresh top-level item -- but only when the
+            # IMMEDIATELY PRECEDING paragraph on this same key was also one of these. The
+            # first paragraph in such a run still legitimately advances the counter (it's
+            # what supplies the outer number, e.g. the "2" in "2(1)"); only the second and
+            # later consecutive ones are suppressed (e.g. "(2)" stays under that same "2").
+            _is_subitem_prefixed = bool(re.match(r'^\(?\d{1,3}\)', raw_text.strip())) if raw_text else False
+            _prev_was_subitem = self._num_last_subitem.get(key, False)
+            if not (_is_subitem_prefixed and _prev_was_subitem):
+                self._num_counters[key] += 1
+            self._num_last_subitem[key] = _is_subitem_prefixed
             n = self._num_counters[key]
 
             def _fmt(n: int, fmt: str) -> str:
@@ -1241,6 +1376,10 @@ class CompleteDOCXExtractor:
         content = self._filter_global_noise(content)
         # Merge adjacent tables with same column count (fixes ABBYY page-break splits)
         content = self._merge_adjacent_tables(content)
+        # FIX Issue 1: ABBYY PageSynthesisMode=1 reads right column before left in two-column
+        # contact/questions sections. Use PyMuPDF to get correct reading order from PDF.
+        if self.pdf_path and os.path.exists(self.pdf_path):
+            content = self._fix_contact_column_order(content)
         paragraphs = [c['data'] for c in content
                      if c['type'] == 'paragraph' and not c['data'].skip]
         tables = [c['data'] for c in content if c['type'] == 'table']
@@ -1362,6 +1501,193 @@ class CompleteDOCXExtractor:
             print(f'   🔗 Table merge: {orig_count} → {merged_count} tables')
         return result
 
+    def _fix_contact_column_order(self, content: List[Dict]) -> List[Dict]:
+        """FIX Issue 1: Reorder contact-info paragraphs using PDF reading order.
+
+        ABBYY PageSynthesisMode=1 reads the RIGHT column before the LEFT in two-column
+        contact/questions sections (e.g. Grace Zheng before Elliott Mak in 51-933).
+        This method uses PyMuPDF to extract the correct reading order from the source PDF
+        and swaps DOCX paragraph groups that are out of order.
+
+        Only activates when self.pdf_path is available and the document has a
+        Questions/Contact section with multiple contacts under the same org heading.
+        """
+        try:
+            import fitz as _fitz
+        except ImportError:
+            return content
+
+        try:
+            _pdf = _fitz.open(self.pdf_path)
+        except Exception:
+            return content
+
+        try:
+            import re as _re_c
+            _ROLE_RE = _re_c.compile(
+                r'(counsel|analyst|director|advisor|officer|accountant|manager|supervisor'
+                r'|administrator|specialist|associate|examiner|commissioner|secretary)',
+                _re_c.IGNORECASE
+            )
+            _PHONE_RE = _re_c.compile(r'^\s*[\d\s\(\)\-\+\.]{7,20}\s*$')
+            _EMAIL_RE = _re_c.compile(r'\b[\w.+-]+@[\w.-]+\.\w{2,}\b')
+            _NAME_EXCLUDES_RE = _re_c.compile(
+                r'^(Senior|Junior|Legal|Securities|Corporate|Deputy|Assistant|Chief'
+                r'|Director|Manager|Analyst|Counsel|Officer|Advisor|Accountant'
+                r'|Policy|Finance|Capital|Markets|Enforcement|Compliance|Regulatory'
+                r'|Surveillance|General|Executive|Vice|Associate)\b',
+                _re_c.IGNORECASE
+            )
+
+            # Extract all text lines from every page in left-to-right reading order
+            pdf_person_order = []
+            for _page_num in range(_pdf.page_count):
+                _page = _pdf[_page_num]
+                _page_dict = _page.get_text("dict")
+                _all_lines = []
+                for _block in _page_dict.get("blocks", []):
+                    if _block.get("type") != 0:
+                        continue
+                    for _line in _block.get("lines", []):
+                        _x0 = _line["bbox"][0]
+                        _y0 = _line["bbox"][1]
+                        _text = " ".join(s["text"] for s in _line.get("spans", [])).strip()
+                        if _text:
+                            _all_lines.append((_y0, _x0, _text))
+                _all_lines.sort(key=lambda t: (round(t[0] / 5) * 5, t[1]))
+                for _li in range(len(_all_lines) - 1):
+                    _y, _x, _txt = _all_lines[_li]
+                    _words = _txt.split()
+                    if (2 <= len(_words) <= 5
+                            and _words[0][0].isupper()
+                            and not _PHONE_RE.match(_txt)
+                            and not _EMAIL_RE.search(_txt)
+                            and not _NAME_EXCLUDES_RE.match(_txt)):
+                        _found_role = False
+                        for _lookahead in range(1, min(4, len(_all_lines) - _li)):
+                            _ny, _nx, _ntxt = _all_lines[_li + _lookahead]
+                            if _ROLE_RE.search(_ntxt):
+                                _found_role = True
+                                break
+                            _nw = _ntxt.split()
+                            if (2 <= len(_nw) <= 5 and _nw[0][0].isupper()
+                                    and not _PHONE_RE.match(_ntxt)
+                                    and not _EMAIL_RE.search(_ntxt)
+                                    and not _NAME_EXCLUDES_RE.match(_ntxt)
+                                    and _ntxt == _ntxt.title()
+                                    and _lookahead > 1):
+                                break
+                        if _found_role:
+                            pdf_person_order.append(_txt.strip())
+
+            if not pdf_person_order:
+                return content
+
+            _pdf_name_pos = {n: i for i, n in enumerate(pdf_person_order)}
+
+            _ORG_RE = _re_c.compile(
+                r'\b(Commission|Authority|Exchange|Service|Board|Tribunal|Office)\b',
+                _re_c.IGNORECASE
+            )
+
+            def _is_org_heading(text: str) -> bool:
+                words = text.split()
+                return bool(2 <= len(words) <= 8 and _ORG_RE.search(text))
+
+            def _is_contact_name(text: str) -> bool:
+                words = text.split()
+                if _NAME_EXCLUDES_RE.match(text):
+                    return False
+                return (2 <= len(words) <= 5
+                        and words[0][0].isupper()
+                        and not _PHONE_RE.match(text)
+                        and not _EMAIL_RE.search(text)
+                        and text == text.title()
+                        )
+
+            def _is_contact_detail(text: str) -> bool:
+                return bool(_PHONE_RE.match(text) or _EMAIL_RE.search(text) or _ROLE_RE.search(text))
+
+            _result = list(content)
+            _para_items = [(i, c) for i, c in enumerate(_result) if c['type'] == 'paragraph']
+            _org_positions = [
+                i for i, c in _para_items
+                if _is_org_heading(c['data'].text.strip())
+            ]
+
+            _swaps = 0
+            for _org_i in _org_positions:
+                _start = _org_i + 1
+                _groups = []
+                _ci = _start
+                while _ci < len(_result):
+                    _item = _result[_ci]
+                    if _item['type'] != 'paragraph':
+                        break
+                    _txt = _item['data'].text.strip()
+                    if not _txt:
+                        _ci += 1
+                        continue
+                    if _is_org_heading(_txt) and _ci != _org_i:
+                        break
+                    if _is_contact_name(_txt):
+                        _block_indices = [_ci]
+                        _ci += 1
+                        while _ci < len(_result):
+                            _nxt = _result[_ci]
+                            if _nxt['type'] != 'paragraph':
+                                break
+                            _ntxt = _nxt['data'].text.strip()
+                            if not _ntxt:
+                                _ci += 1
+                                continue
+                            if _is_contact_name(_ntxt) or _is_org_heading(_ntxt):
+                                break
+                            if _is_contact_detail(_ntxt) or len(_ntxt.split()) <= 3:
+                                _block_indices.append(_ci)
+                                _ci += 1
+                            else:
+                                break
+                        _groups.append((_block_indices, _txt))
+                    else:
+                        _ci += 1
+
+                if len(_groups) < 2:
+                    continue
+
+                def _pdf_sort_key(grp):
+                    _name = grp[1]
+                    for _pn, _pi in _pdf_name_pos.items():
+                        if _name.lower() in _pn.lower() or _pn.lower() in _name.lower():
+                            return _pi
+                    return 999999
+
+                _sorted_groups = sorted(_groups, key=_pdf_sort_key)
+
+                if [g[1] for g in _sorted_groups] == [g[1] for g in _groups]:
+                    continue
+
+                _all_orig_indices = [idx for grp in _groups for idx in grp[0]]
+                _sorted_items = [_result[idx] for grp in _sorted_groups for idx in grp[0]]
+                for _pos, _idx in enumerate(_all_orig_indices):
+                    _result[_idx] = _sorted_items[_pos]
+                _swaps += 1
+                _names_before = [g[1] for g in _groups]
+                _names_after = [g[1] for g in _sorted_groups]
+                print(f'   FIX Issue 1: Reordered contact block: {_names_before} -> {_names_after}')
+
+            if _swaps:
+                print(f'   FIX Issue 1: Fixed {_swaps} contact column ordering group(s)')
+            return _result
+        except Exception as _e:
+            print(f'   FIX Issue 1: Contact reorder skipped ({_e})')
+            return content
+        finally:
+            try:
+                _pdf.close()
+            except Exception:
+                pass
+
     # ─── METADATA ──────────────────────────────────────────────────────────────
     def _extract_metadata(self) -> 'DocumentMetadata':
         metadata = DocumentMetadata()
@@ -1422,6 +1748,9 @@ class CompleteDOCXExtractor:
             # Only capture known revision suffixes like "(Revised)" in doc number.
             # Do NOT capture "(Commodity Futures Act)" or other descriptive parentheticals.
             # FIX 8A: also match 2-3 digit prefix with 4-digit year suffix (e.g. ASC 25-0271)
+            # FIX 8D: search only top-10 paragraphs (not full combined) to avoid matching
+            # body-text references like "National Instrument 31-103 Registration Requirements"
+            # when the doc title uses a different number (e.g. Discussion Paper 11-406).
             _DOC_TYPE_NUM_RE = re.compile(
                 r'\b(?:CSA\s+(?:Multilateral\s+)?(?:Staff\s+)?Notice|'
                 r'OSC\s+(?:Rule|Staff\s+Notice|Notice|Policy)|'
@@ -1433,7 +1762,8 @@ class CompleteDOCXExtractor:
                 r'Staff\s+Notice)\s+'
                 r'(\d{2,3}-\d{2,4}(?:\s*\((?:Revised|Amendment|Amended|Restated|Updated)\))?)', re.I
             )
-            dm2 = _DOC_TYPE_NUM_RE.search(combined)
+            _top10 = '\n'.join(top_texts[:10])
+            dm2 = _DOC_TYPE_NUM_RE.search(_top10)
             if dm2:
                 doc_num = dm2.group(1).strip()
         if not doc_num:
@@ -1822,13 +2152,20 @@ class CompleteDOCXExtractor:
                 )
                 _FRENCH_WORD_PAT = re.compile(
                     r'\b(?:organisme|canadien|investissements|reglement|valeurs|'
-                    r'reglementation|commission|agence|conseil)\b', re.I
+                    r'reglementation|commission|agence|conseil|'
+                    r'consommateurs|financiers|nouveau-brunswick|brunswick|'
+                    r'autorit[e\xe9]|financier|services\s+aux)\b', re.I
                 )
                 if _ORG_END_PAT.search(text.strip()) or _FRENCH_WORD_PAT.search(text):
                     continue
 
             # ── 8. Stop at long body text ────────────────────────────────────
             if title_parts and len(text) > 180 and re.search(r'[a-z]{10}', text):
+                break
+
+            # ── 8b. Stop at first body sentence (medium length with lowercase) ─
+            # Catches the first body paragraph after a short section heading like "Definition"
+            if title_parts and len(text) > 60 and re.search(r'[a-z]{8}', text):
                 break
 
             # ── 9. Stop at ALL-CAPS duplicate of existing title ──────────────
@@ -1838,6 +2175,14 @@ class CompleteDOCXExtractor:
                 overlap = len(existing_words & new_words) / max(len(new_words), 1)
                 if overlap >= 0.4:  # ≥ 40% word overlap with existing → ALL-CAPS duplicate
                     break
+
+            # ── 10. Stop when title has a doc number and next text is a short section heading ──
+            # e.g. after "MULTILATERAL INSTRUMENT 91-102 PROHIBITION OF BINARY OPTIONS"
+            # don't add "Definition" or other short heading texts that follow the title.
+            if title_parts and len(words) <= 3:
+                _full_title_so_far = ' '.join(title_parts)
+                if re.search(r'\b\d{2,3}-\d{2,3}\b', _full_title_so_far):
+                    break  # Title is complete; short next word is a section heading
 
             title_parts.append(text.strip())
 
@@ -2107,7 +2452,43 @@ class CompleteDOCXExtractor:
                     _has_url_only = bool(re.match(
                         r'^(?:https?://|www\.)\S+$', text.strip(), re.I
                     ))
-                    if not _is_allcaps_section and not para.patterns.get('has_email') and not _has_url_only:
+                    # Bold standalone section-heading words (e.g. "Introduction",
+                    # "Purpose", "Background") are common in CSA/securities notices and
+                    # land in the cover zone (doc title/date lines are also short). They
+                    # were being swallowed by the word-count<=3 branch above with no
+                    # exception — confirmed root cause of "bold headings not converted"
+                    # (e.g. NI 23-101's "Introduction" heading dropped entirely).
+                    _is_known_short_heading = (
+                        para.patterns.get('is_all_bold', False)
+                        and text.strip().rstrip(':').lower() in self._SHORT_HEADING_WORDS
+                    )
+                    # FIX 49 (2026-08-24): plain (not centered, not bold) short body text
+                    # occurring AFTER the main title was still being dropped as "cover
+                    # noise" purely for having <=3 words -- this branch never checked
+                    # _past_title even though the function's own top comment says "once
+                    # the title is found... short paragraphs are body content — preserve
+                    # them" (other sibling rules in this function, e.g. the phone/fax
+                    # skip above, correctly gate on `not _past_title`; this one didn't).
+                    # Root-caused via a real bug: 96-308's short "Questions" contact
+                    # block (a name/title/org/phone list) starts at paragraph ~11, still
+                    # inside the 12-20-paragraph cover-detection scan window for this
+                    # short document -- so "Dominique Martin" (2 words), "Derivatives"
+                    # (1 word, a title continuation), "514-395-0337, ext. 4351" (3
+                    # tokens), and "Michael Brady" (2 words) were all silently skipped,
+                    # while their neighboring >3-word lines in the SAME contact block
+                    # ("Senior Director, Market Activities and", "Autorité des marchés
+                    # financiers") survived untouched -- confirmed via direct paragraph
+                    # trace showing these 4 exact paragraphs vanish between raw DOCX
+                    # extraction and the post-cover-filter paragraph list, all sharing
+                    # only the "<=3 words, not bold, not centered" trait.
+                    _is_plain_short_body_post_title = (
+                        _past_title
+                        and not para.patterns.get('is_centered', False)
+                        and not para.patterns.get('is_all_bold', False)
+                    )
+                    if (not _is_plain_short_body_post_title
+                            and not _is_allcaps_section and not para.patterns.get('has_email')
+                            and not _has_url_only and not _is_known_short_heading):
                         para.skip = True
                         skip_count += 1
             # All-caps bold cover lines (e.g. multi-line title split by ABBYY, or
@@ -2135,6 +2516,7 @@ class CompleteDOCXExtractor:
         r'Autorit[e\xe9]s?\s+canadiennes\s+en\s+valeurs|'        # bilingual org header
         r'^\s*[A-Z]-\s*[A-Z]\+\*?\s*$|'                         # font-size controls "A- A+*"
         r'Type:\s*Rules\s+Bulletin\s*>|'                         # CIRO bulletin metadata header
+        r'Comments\s+Due\s+By\s*:|'                              # CIRO comments deadline metadata
         r'Distribute\s+internally\s+to\s*:|'                     # CIRO distribution list label
         r'(?:Corporate\s+Finance|Regulatory\s+Accounting).*(?:Senior\s+Management|Trading\s+Desk)|'  # CIRO distribution list body
         r'Rulebook\s+connection\s*:|'                             # CIRO rulebook reference
@@ -2337,7 +2719,36 @@ class CompleteDOCXExtractor:
                     if right_col in (')', ''):
                         para.skip = True
                         skip_count += 1
-                    # else preserve the text portion
+                    # FIX 50 (2026-08-24): a tab-separated right column that's a plain
+                    # page number (e.g. "Registrants\t7", "Designated Rating
+                    # Organizations\t24") is a genuine TOC entry -- the real heading
+                    # reappears later in the body (confirmed via 11-348: "Registrants"
+                    # shows up again as a real Heading#2 paragraph further down).
+                    # Previously this branch computed `para_text_clean` (the correctly
+                    # tab-stripped text) but never assigned it back to para.text, and
+                    # had no page-number case at all -- so the paragraph fell through
+                    # UNCHANGED, with the page number still attached, and (since
+                    # `is_toc_entry` alone doesn't block the main heading-level-based
+                    # BLOCK routing path) got emitted as a duplicate BLOCK2/BLOCK3
+                    # heading with a trailing page number baked into the title text
+                    # (e.g. "<TI>Clearing Agencies and Matching Service Utilities 22</TI>").
+                    # Skip the whole entry instead of trying to salvage it as body text.
+                    elif re.match(r'^\d{1,4}$', right_col):
+                        para.skip = True
+                        skip_count += 1
+                    else:
+                        # Not a court-caption marker or a page number -- preserve as
+                        # plain text (the actual bug fix: assign the cleaned text back).
+                        para.text = para_text_clean
+                elif re.search(r'\S\s+\d{1,4}$', para.text.strip()):
+                    # FIX 50b: by the time this runs, an earlier extraction step has
+                    # already normalized the DOCX's <w:tab/> to a plain space, so the
+                    # '\t' in para.text check above never fires at all for MOST real
+                    # documents (confirmed live on 11-348 -- "Registrants\t7" arrives
+                    # here as "Registrants 7", no literal tab). Same genuine-TOC-entry
+                    # case as above, just without a surviving tab character to split on.
+                    para.skip = True
+                    skip_count += 1
                 else:
                     # Single-cell TOC entry without tab: just ")" or very short → skip
                     if para.text.strip() in (')', ''):
@@ -2372,11 +2783,41 @@ class CompleteDOCXExtractor:
         doc_seen_texts = set()
         table_total_idx = 0   # sequential index of ALL tables seen (layout + data)
         body = self.document.element.body
+        _W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+        _TXBX_TAG = f'{_W}txbxContent'
         for element in body:
             tag = element.tag.split('}')[-1]
             if tag == 'p':
                 if para_index < len(self.document.paragraphs):
                     para = self.document.paragraphs[para_index]
+                    # Extract floating text-box paragraphs BEFORE the anchor paragraph.
+                    # ABBYY two-column: right-column text is in the main body flow;
+                    # left-column text is placed in an anchored text box (<w:txbxContent>).
+                    # Inserting text-box content before the anchor restores left-before-right order.
+                    for txbx in element.iter(_TXBX_TAG):
+                        txbx_idx = layout_para_counter[0]
+                        for txbx_p in txbx.findall(f'{_W}p'):
+                            runs = txbx_p.findall(f'.//{_W}r')
+                            txbx_text = ''.join(
+                                (t.text or '') for r in runs for t in r.findall(f'{_W}t')
+                            ).strip()
+                            if not txbx_text:
+                                continue
+                            txt_key = txbx_text[:100].lower()
+                            if txt_key in doc_seen_texts:
+                                continue
+                            doc_seen_texts.add(txt_key)
+                            # Build a minimal ParagraphData-like object via _extract_paragraph
+                            # by temporarily wrapping the txbx paragraph in a python-docx Paragraph.
+                            try:
+                                from docx.text.paragraph import Paragraph as _DocxPara
+                                _fake_para = _DocxPara(txbx_p, self.document)
+                                txbx_para_data = self._extract_paragraph(_fake_para, txbx_idx)
+                                content.append({'type': 'paragraph', 'data': txbx_para_data})
+                                txbx_idx += 1
+                            except Exception:
+                                pass
+                        layout_para_counter[0] = txbx_idx
                     # Skip inline footnote body paragraphs (will be inlined at reference point)
                     if para_index not in self._inline_fn_para_idx:
                         para_data = self._extract_paragraph(para, para_index)
@@ -2445,8 +2886,22 @@ class CompleteDOCXExtractor:
         # cell with a newline), OR col1 first cell is exactly "PART" (pure header).
         # Companion-document narrative tables start with "PART 1", "1.1", "" etc.
         # and must NOT be dropped.
+        # FIX (2026-08-24): the "PART"/"TITLE" header row is not always row 0 --
+        # some TOC tables have a leading title-only row first (e.g. "" | "TABLE OF
+        # CONTENTS", or "" | "COMPANION POLICY 35-101CP..."), pushing the real
+        # header to row 1. Checking only row 0 missed this shape entirely, so the
+        # table was never dropped -- it got converted to real paragraphs by the
+        # section-ref|content layout logic below, duplicating every TOC entry as
+        # if it were body content AND polluting _current_part_num tracking with
+        # the TOC's own "PART N" cells interleaved out of order with the real
+        # PART headings later in the document (confirmed root cause of the
+        # "N.M" section numbers all showing a wrong constant part-number prefix
+        # across 60-doc E2E testing, e.g. instrument-35-101, 15-601). Now scans
+        # the first 3 rows for an EXACT "PART" cell paired with an adjacent
+        # "TITLE" cell -- the unambiguous TOC header signature -- not just row 0.
         try:
             _col1_texts = []
+            _header_row_texts = []
             for row in rows:
                 seen_ids = set()
                 cells = []
@@ -2456,10 +2911,18 @@ class CompleteDOCXExtractor:
                         cells.append(cell)
                 if cells:
                     _col1_texts.append(cells[0].text.strip())
+                    _header_row_texts.append([c.text.strip() for c in cells])
             _part_matches = sum(1 for t in _col1_texts if re.search(r'\bPART\s+\d+', t, re.IGNORECASE))
             _first_cell = _col1_texts[0] if _col1_texts else ''
             # True TOC: first cell is "PART" (exact header) or "PART\nPART 1" (merged header+data)
             _is_toc_header = (_first_cell == 'PART') or _first_cell.startswith('PART\n')
+            # Also accept a "PART"+"TITLE" header pair anywhere in the first 3 rows
+            # (handles a leading title-only row before the real header row).
+            if not _is_toc_header:
+                for _row_texts in _header_row_texts[:3]:
+                    if len(_row_texts) >= 2 and _row_texts[0] == 'PART' and _row_texts[1].upper() == 'TITLE':
+                        _is_toc_header = True
+                        break
             if _part_matches >= 2 and _is_toc_header:
                 return []  # Hard-drop: pure TOC table, no paragraphs extracted
         except Exception:
@@ -2510,11 +2973,7 @@ class CompleteDOCXExtractor:
                 return []
             items = []
             idx = base_index
-            # FIX-2COL-DEDUP: Use per-table LOCAL set for deduplication.
-            # Using shared doc_seen_texts caused cross-table false deduplication:
-            # bilingual docs (English+French) with repeated contact/signature tables
-            # had their second table's content silently dropped.
-            local_seen: set = set()  # Per-table only
+            local_seen = doc_seen_texts if doc_seen_texts is not None else set()
             for row in rows:
                 row_cells = []
                 row_seen = set()
@@ -2523,8 +2982,8 @@ class CompleteDOCXExtractor:
                         continue
                     row_seen.add(id(cell))
                     row_cells.append(cell)
-                if len(row_cells) >= 2:
-                    target_cell = row_cells[1]
+                # FIX: extract ALL columns left-to-right, not just col[1]
+                for target_cell in row_cells:
                     for para in target_cell.paragraphs:
                         if not para.text.strip():
                             continue
@@ -2532,9 +2991,8 @@ class CompleteDOCXExtractor:
                         if txt_key in local_seen:
                             continue
                         local_seen.add(txt_key)
-                        if doc_seen_texts is not None:
-                            doc_seen_texts.add(txt_key)
                         para_data = self._extract_paragraph(para, idx)
+                        para_data.from_table_cell = True
                         items.append({'type': 'paragraph', 'data': para_data})
                         idx += 1
             return items
@@ -2558,17 +3016,15 @@ class CompleteDOCXExtractor:
             if (numeric_count / len(col2_texts)) >= 0.6:
                 return []
 
-        # 2-col (non-TOC): extract ALL cells column-by-column with per-table dedup
-        # FIX-2COL-DEDUP: Use per-table LOCAL set for dedup (not shared doc_seen_texts).
-        # Column-by-column extraction (col0 first, then col1) preserves reading order.
+        # FIX Issue 1: column-by-column extraction for 2-col layout tables.
+        # FIX 41: Section-ref|content tables use ROW-by-ROW to keep PART N with its title.
         items = []
         seen_cell_ids = set()
-        seen_texts: set = set()  # Per-table local — NOT doc_seen_texts
+        seen_texts = doc_seen_texts if doc_seen_texts is not None else set()
         idx = base_index
-
-        # Collect unique cells for each column across all rows
         col0_cells = []
         col1_cells = []
+        row_cells_list = []
         for row in rows:
             unique = []
             _seen_row = set()
@@ -2576,12 +3032,60 @@ class CompleteDOCXExtractor:
                 if id(cell) not in _seen_row:
                     _seen_row.add(id(cell))
                     unique.append(cell)
+            row_cells_list.append(unique)
             if len(unique) >= 1:
                 col0_cells.append(unique[0])
             if len(unique) >= 2:
                 col1_cells.append(unique[1])
 
-        # Extract column 0 first, then column 1 (preserves natural reading order)
+        # FIX 41: use row-by-row for section-ref|content tables (PART N|title pattern)
+        # so "PART 4" immediately precedes "EXEMPTION FROM..." instead of being separated
+        # by other section numbers (which happens with column-by-column ordering).
+        _sec_pat41 = re.compile(r'^(PART|CHAPTER|SCHEDULE|APPENDIX|ANNEX)\s+\d|\d+\.\d+', re.I)
+        _ref41 = sum(1 for c in col0_cells if _sec_pat41.match(c.text.strip()))
+        _use_row_order = col0_cells and _ref41 / len(col0_cells) >= 0.5
+
+        if _use_row_order:
+            # Row-by-row: col0 then col1 per row — preserves semantic PART N → title order
+            for unique in row_cells_list:
+                for cell in unique:
+                    cid = id(cell)
+                    if cid in seen_cell_ids:
+                        continue
+                    seen_cell_ids.add(cid)
+                    for para in cell.paragraphs:
+                        if not para.text.strip():
+                            continue
+                        txt_key = para.text.strip()[:100].lower()
+                        if txt_key in seen_texts:
+                            continue
+                        seen_texts.add(txt_key)
+                        para_data = self._extract_paragraph(para, idx)
+                        para_data.from_table_cell = True
+                        items.append({'type': 'paragraph', 'data': para_data})
+                        idx += 1
+            return items
+
+        # FIX 48 (2026-08-24): contact-block tables (name/title/org/phone/email laid
+        # out one contact per column) legitimately repeat IDENTICAL text across
+        # columns -- e.g. two contacts sharing the same employer, or the same area
+        # code in their phone numbers. The seen_texts/doc_seen_texts dedup below
+        # exists to catch ACCIDENTAL duplicate extraction (e.g. a heading reachable
+        # via two code paths), not to drop a second contact's legitimately-shared
+        # field value. Root-caused via direct DOCX table inspection (46-309: no
+        # gridSpan/vMerge at all -- both columns' cells genuinely contain the same
+        # literal org-name text): Eric Thong's "British Columbia Securities
+        # Commission" line was silently dropped because Megan Quek's identical org
+        # line, extracted first from column 0, had already marked that exact text
+        # as "seen" for the rest of the document. Detect a contact-block table via
+        # phone/email/tel/fax signal and skip the TEXT dedup for it specifically
+        # (the existing seen_cell_ids check above still prevents any single cell
+        # from being processed twice).
+        _contact_sig_re = re.compile(r'@|\(\d{3}\)\s?\d{3}[\s.-]?\d{4}|\btel\b|\bfax\b', re.IGNORECASE)
+        _all_col_texts = [c.text for c in (col0_cells + col1_cells)]
+        _contact_hits = sum(1 for t in _all_col_texts if _contact_sig_re.search(t))
+        _is_contact_table = _contact_hits >= 2
+
         for cell in col0_cells + col1_cells:
             cid = id(cell)
             if cid in seen_cell_ids:
@@ -2591,12 +3095,12 @@ class CompleteDOCXExtractor:
                 if not para.text.strip():
                     continue
                 txt_key = para.text.strip()[:100].lower()
-                if txt_key in seen_texts:
-                    continue
-                seen_texts.add(txt_key)
-                if doc_seen_texts is not None:
-                    doc_seen_texts.add(txt_key)  # update global tracker
+                if not _is_contact_table:
+                    if txt_key in seen_texts:
+                        continue
+                    seen_texts.add(txt_key)
                 para_data = self._extract_paragraph(para, idx)
+                para_data.from_table_cell = True
                 items.append({'type': 'paragraph', 'data': para_data})
                 idx += 1
         return items
@@ -2658,6 +3162,23 @@ class CompleteDOCXExtractor:
                 print(f'   🗂  MISCLAW Part-index table at position {table_total_idx} dropped')
                 return True  # MISCLAW TOC table — drop from output
 
+        # FIX 39: 2-col section-reference|content layout tables (e.g. "PART 4 | full text...").
+        # These appear in regulatory instruments/companion policies formatted as 2-column tables
+        # where col0 = section reference ("PART N", "N.N") and col1 = paragraph content.
+        # Must be detected BEFORE preserve_data_tables early-return so they become paragraphs.
+        if max_cols == 2 and len(rows) >= 2:
+            _col0 = [row[0].get('text', '').strip() for row in rows if len(row) >= 1]
+            _col1 = [row[1].get('text', '').strip() for row in rows if len(row) >= 2]
+            if _col0 and _col1:
+                _sec_pat = re.compile(
+                    r'^(PART|CHAPTER|SCHEDULE|APPENDIX|ANNEX)\s+\d|\d+\.\d+', re.I
+                )
+                _ref_count = sum(1 for t in _col0 if _sec_pat.match(t))
+                _col1_avg = sum(len(t) for t in _col1) / len(_col1)
+                if _ref_count / len(_col0) >= 0.5 and _col1_avg >= 30:
+                    print(f'   🏷  Sec-ref|content layout table at {table_total_idx} → paragraphs')
+                    return True
+
         # When preserve_data_tables is set AND table is non-trivial → keep as data table
         # (moved early so empty-cells heuristics don't drop real financial tables)
         if getattr(self, '_preserve_data_tables', False):
@@ -2687,6 +3208,21 @@ class CompleteDOCXExtractor:
         if max_cols >= 3:
             return True
         if len(rows) <= 1:
+            # A single physical row can still represent MULTIPLE logical rows when
+            # each cell's paragraphs were merged (e.g. a financial summary table with
+            # "Principal Purpose"/"Amount" columns, each cell holding one line per row).
+            # Only treat as a real (non-layout) data table when both columns have the
+            # same multi-line count and neither looks like contact-block prose.
+            if max_cols == 2 and len(rows) == 1:
+                _r0 = rows[0]
+                if len(_r0) >= 2:
+                    _c0_lines = [ln.strip() for ln in _r0[0].get('text', '').split('\n') if ln.strip()]
+                    _c1_lines = [ln.strip() for ln in _r0[1].get('text', '').split('\n') if ln.strip()]
+                    _contact_re_1r = re.compile(r'@|\btel\b|\bfax\b|\bphone\b|\bemail\b', re.IGNORECASE)
+                    _has_contact = _contact_re_1r.search(_r0[0].get('text', '')) or _contact_re_1r.search(_r0[1].get('text', ''))
+                    if (len(_c0_lines) >= 2 and len(_c0_lines) == len(_c1_lines)
+                            and not _has_contact):
+                        return False  # real multi-row data table compressed into one physical row
             return True
         if len(rows) <= 3 and avg_len > 80:
             return True
@@ -2695,21 +3231,166 @@ class CompleteDOCXExtractor:
         if max_len < 50:
             return True
 
+        # 2-col table where most cells contain multiple paragraphs (e.g. name/org/email
+        # in a two-column contact list). These are layout tables, not data tables.
+        # Guard: require an actual contact signal (email/tel/fax/phone). Without this,
+        # a merged-cell financial table (e.g. "Principal Purpose"/"Amount" cells each
+        # containing several short row-label paragraphs) also has multi-line cells and
+        # was wrongly caught by a length-only heuristic — those are real data tables and
+        # belong in SGMLTBL, not flattened paragraphs.
+        if max_cols == 2:
+            total_cells = sum(len(row) for row in rows)
+            multi_para_texts = [cell.get('text', '').strip() for row in rows for cell in row
+                                 if '\n' in cell.get('text', '').strip()]
+            multi_para_cells = len(multi_para_texts)
+            if total_cells > 0 and multi_para_cells / total_cells >= 0.5:
+                _contact_re = re.compile(r'@|\btel\b|\bfax\b|\bphone\b|\bemail\b', re.IGNORECASE)
+                if any(_contact_re.search(_t) for _t in multi_para_texts):
+                    return True
+
         return False
 
     def _extract_paragraph(self, para, index: int) -> 'ParagraphData':
+        # FIX Issue 2: Detect paragraph-level bold/italic from pPr/rPr (default run props).
+        # DOCX runs with bold=None inherit from the paragraph's rPr. We resolve that
+        # here so extract_inline_formatting produces contiguous BOLD spans rather than
+        # gaps where None-bold runs are treated as plain.
+        _W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+        _para_bold = False
+        _para_italic = False
+        try:
+            _pPr = para._element.find(_W + 'pPr')
+            if _pPr is not None:
+                _rPr = _pPr.find(_W + 'rPr')
+                if _rPr is not None:
+                    _b_el = _rPr.find(_W + 'b')
+                    if _b_el is not None:
+                        _bval = _b_el.get(_W + 'val', '1')
+                        _para_bold = _bval not in ('0', 'false', 'off')
+                    _i_el = _rPr.find(_W + 'i')
+                    if _i_el is not None:
+                        _ival = _i_el.get(_W + 'val', '1')
+                        _para_italic = _ival not in ('0', 'false', 'off')
+        except Exception:
+            pass
+        def _run_text_xml(run_el, W):
+            """Read run text from XML, translating special elements python-docx misses.
+
+            - <w:t> : normal text (may carry xml:space="preserve")
+            - <w:noBreakHyphen/> : non-breaking hyphen → '-'
+            - <w:softHyphen/>    : soft (optional) hyphen → '-'  (ABBYY uses these at line breaks)
+            - <w:tab/>           : tab → ' '
+            - <w:br/>            : manual line-wrap. If it immediately follows a hyphen
+              (a compound word wrapped mid-word, e.g. "broker" + "-" + <br/> + "dealer"),
+              emit nothing so the word stays joined. Otherwise it falls between two whole
+              words (e.g. "client" + <br/> + "relationship") and must become a space, or
+              the words silently merge with zero separator (confirmed root cause of the
+              "wordword" merge pattern found across 60-doc E2E testing, e.g. instrument-35-101).
+            """
+            parts = []
+            for child in run_el:
+                tag_local = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                if tag_local == 't':
+                    parts.append(child.text or '')
+                elif tag_local in ('noBreakHyphen', 'softHyphen'):
+                    parts.append('-')
+                elif tag_local == 'tab':
+                    parts.append(' ')
+                elif tag_local == 'br':
+                    if parts and parts[-1].endswith('-'):
+                        pass
+                    else:
+                        parts.append(' ')
+            return ''.join(parts)
+
         runs = []
-        for run in para.runs:
-            # FIX 5A/5B: capture superscript and strikethrough from DOCX run formatting
-            _sup = bool(run.font.superscript)
-            _str = bool(run.font.strike)
+        # FIX BIZ_07: python-docx para.runs skips runs inside <w:hyperlink> elements,
+        # causing all hyperlink text (e.g. TOC entries, cross-references) to be dropped.
+        # Instead, iterate direct XML children and collect <w:r> elements from both
+        # plain runs and runs nested inside <w:hyperlink> wrappers.
+        _run_elements = []
+        for child in para._element:
+            tag_local = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+            if tag_local == 'r':
+                _run_elements.append(child)
+            elif tag_local == 'hyperlink':
+                # Collect text from all runs inside this hyperlink first, to detect URL-only content
+                _hl_texts = []
+                _hl_runs = []
+                for hl_child in child:
+                    hl_tag = hl_child.tag.split('}')[-1] if '}' in hl_child.tag else hl_child.tag
+                    if hl_tag == 'r':
+                        _hl_runs.append(hl_child)
+                        _hl_texts.append(_run_text_xml(hl_child, _W))
+                _hl_combined = ''.join(_hl_texts).strip()
+                # Skip hyperlinks whose visible text is a URL/anchor reference —
+                # these are footnote anchors or external URLs, not body content.
+                # Detected by: starts with #/http, or is a long hash-like string
+                _is_url_text = (
+                    _hl_combined.startswith(('#', 'http://', 'https://'))
+                    or (len(_hl_combined) > 20 and
+                        re.match(r'^[\w\-_/|.+%@:#\s]+$', _hl_combined) and
+                        sum(1 for c in _hl_combined if c.isalpha()) > 10 and
+                        len(_hl_combined.split()) <= 3)
+                )
+                if not _is_url_text:
+                    _run_elements.extend(_hl_runs)
+        # Build a mapping from run._element to run object for property access
+        _run_obj_map = {r._element: r for r in para.runs}
+        for run_el in _run_elements:
+            run_obj = _run_obj_map.get(run_el)
+            # FIX Issue 2: resolve None (inherited) bold/italic using paragraph-level rPr
+            if run_obj is not None:
+                _font_name = run_obj.font.name
+                # ABBYY OCR frequently encodes bold by embedding a distinct "...-BoldMT"
+                # font subset resource instead of setting <w:b/> at any level (run or
+                # paragraph rPr) — such runs are otherwise invisible to is_all_bold,
+                # which silently breaks heading/BLOCK routing downstream (confirmed
+                # root cause of "bold headings not converted", e.g. NI 23-101 "Introduction").
+                _font_looks_bold = bool(_font_name) and 'bold' in _font_name.lower()
+                _run_bold = (run_obj.bold if run_obj.bold is not None else _para_bold) or _font_looks_bold
+                _run_italic = run_obj.italic if run_obj.italic is not None else _para_italic
+                _sup = bool(run_obj.font.superscript)
+                _str = bool(run_obj.font.strike)
+                _underline = run_obj.underline if run_obj.underline is not None else False
+                _font_size = run_obj.font.size.pt if run_obj.font.size else None
+            else:
+                # Run is inside a hyperlink — no python-docx Run object, read from XML
+                _rPr = run_el.find(_W + 'rPr')
+                _run_bold = _para_bold
+                _run_italic = _para_italic
+                _sup = False
+                _str = False
+                _underline = False
+                _font_size = None
+                _font_name = None
+                if _rPr is not None:
+                    _b_el = _rPr.find(_W + 'b')
+                    if _b_el is not None:
+                        _bval = _b_el.get(_W + 'val', '1')
+                        _run_bold = _bval not in ('0', 'false', 'off')
+                    _i_el = _rPr.find(_W + 'i')
+                    if _i_el is not None:
+                        _ival = _i_el.get(_W + 'val', '1')
+                        _run_italic = _ival not in ('0', 'false', 'off')
+                    _vert_el = _rPr.find(_W + 'vertAlign')
+                    if _vert_el is not None:
+                        _sup = _vert_el.get(_W + 'val', '') == 'superscript'
+                    _sz_el = _rPr.find(_W + 'sz')
+                    if _sz_el is not None:
+                        try:
+                            _font_size = int(_sz_el.get(_W + 'val', '0')) / 2.0
+                        except ValueError:
+                            pass
+            # FIX Bug 3: read run XML directly to capture w:noBreakHyphen / w:softHyphen
+            _run_text = _run_text_xml(run_el, _W)
             runs.append(RunData(
-                text=run.text,
-                bold=run.bold if run.bold is not None else False,
-                italic=run.italic if run.italic is not None else False,
-                underline=run.underline if run.underline is not None else False,
-                font_size=run.font.size.pt if run.font.size else None,
-                font_name=run.font.name,
+                text=_run_text,
+                bold=_run_bold,
+                italic=_run_italic,
+                underline=_underline,
+                font_size=_font_size,
+                font_name=_font_name,
                 superscript=_sup,
                 strike=_str,
             ))
@@ -2717,7 +3398,15 @@ class CompleteDOCXExtractor:
         left_indent_pt = float(left_indent.pt) if left_indent else 0.0
         # Feedback #3b: ABBYY inserts soft line-returns as runs ending with a trailing
         # space, producing double-spaces in the joined paragraph text.  Collapse them.
-        _para_text = re.sub(r' {2,}', ' ', para.text)
+        # FIX Bug 3: build para text from run texts (which now include noBreakHyphen)
+        # instead of python-docx para.text which misses special hyphen elements.
+        _para_text = re.sub(r' {2,}', ' ', ''.join(r.text for r in runs))
+        # ABBYY OCR inserts a space directly after '(' or before ')' — normalize both.
+        _para_text = re.sub(r'\( +(\S)', r'(\1', _para_text)
+        _para_text = re.sub(r'(\S) +\)', r'\1)', _para_text)
+        _part_m = re.match(r'^\s*PART\s+(\d+)\b', _para_text, re.IGNORECASE)
+        if _part_m:
+            self._current_part_num = int(_part_m.group(1))
         para_data = ParagraphData(
             index=index, text=_para_text, runs=runs,
             style=para.style.name if para.style else 'Normal',
@@ -2792,22 +3481,48 @@ class CompleteDOCXExtractor:
         # fire correctly and produce <PARA><N>(a)</N><PARAP>...</PARAP></PARA>
         # structure matching vendor SGML.
         if self._numbering:
-            _auto_label = self._get_numpr_label(para._element)
+            _auto_label = self._get_numpr_label(para._element, para_data.text)
             if _auto_label:
                 _txt = para_data.text.lstrip()
-                # Only prepend if text doesn't already start with this label
-                # (avoids double-counting when the number IS typed in the text)
-                if not _txt.startswith(_auto_label):
+                # Guard: text already carries its own explicit numbering — never prepend.
+                # Matches: "14.1.3 ...", "(2) ...", "(a) ...", "3 2)..." etc.
+                _already_has_label = bool(re.match(
+                    r'^[\(\[]?\d[\d.()\[\]]*[\s\.\)\]]|^\([a-zA-Z]\)',
+                    _txt
+                ))
+                if _already_has_label:
+                    # The visible prefix may be a SHALLOWER/partial form of the fuller
+                    # auto-generated label (e.g. visible "01" vs. auto "25.01" — happens
+                    # when the outer Part-level numPr counter was recovered from context,
+                    # see _get_numpr_label). Replace it instead of leaving both the partial
+                    # and full numbers in the text ("25.01 01 Investigation..." bug).
+                    _visible_num_m = re.match(r'^[\(\[]?([\d.]+)[\)\]]?[\s\.\)\]]', _txt)
+                    if (_visible_num_m and _auto_label.endswith(_visible_num_m.group(1))
+                            and _auto_label != _visible_num_m.group(1)):
+                        _txt = _txt[_visible_num_m.end():].lstrip()
+                        _already_has_label = False
+                if not _txt.startswith(_auto_label) and not _already_has_label:
                     para_data.text = _auto_label + ' ' + _txt
-                    # Update the RunData list: prepend a synthetic run so
-                    # inline formatting offsets remain consistent
-                    from dataclasses import replace as _dc_replace
+                    _prefix_bold   = para_data.patterns.get('is_all_bold', False)
+                    _prefix_italic = para_data.patterns.get('is_all_italic', False)
                     _prefix_run = RunData(
                         text=_auto_label + ' ',
-                        bold=False, italic=False, underline=False,
+                        bold=_prefix_bold, italic=_prefix_italic, underline=False,
                         font_size=None, font_name=None
                     )
                     para_data.runs = [_prefix_run] + list(para_data.runs)
+                # FIX (2026-08-24): "PART N" heading text can itself be entirely
+                # numPr-generated (e.g. raw run text is just "DEFINITIONS", with
+                # "PART 1" only appearing after the auto-label above is prepended).
+                # The earlier _part_m check (on _para_text, before this block) never
+                # sees it in that case, so self._current_part_num silently never
+                # updates for the rest of the document -- confirmed root cause of
+                # every subsequent numbered item showing no/wrong Part-relative
+                # number (e.g. instrument-35-101, 15-601: real content, not a table
+                # issue). Re-check on the now-possibly-updated text.
+                _part_m2 = re.match(r'^\s*PART\s+(\d+)\b', para_data.text, re.IGNORECASE)
+                if _part_m2:
+                    self._current_part_num = int(_part_m2.group(1))
         return para_data
 
     def _detect_patterns(self, para_data: 'ParagraphData') -> Dict:
@@ -3029,7 +3744,9 @@ class PatternBasedTagger:
 
         # Normalize heading levels relative to minimum found in this document.
         # ABBYY often produces Heading 3/4 where the correct output is BLOCK2/3.
-        # Skip HL=1 (document title level) and centered paragraphs.
+        # FIX 16b: Include non-skipped Heading #1 paragraphs so documents with top-level
+        # HL1 section headings correctly map HL1→BLOCK2, HL2→BLOCK3, HL3→BLOCK4.
+        # Without this, HL1 was excluded and min_hl=2, causing HL2→BLOCK2 (too shallow).
         import re as _re_norm
         _raw_levels = []
         _raw_levels_bold = []
@@ -3037,9 +3754,11 @@ class PatternBasedTagger:
         for _p in paragraphs:
             if _p.patterns.get('is_centered', False):
                 continue  # skip centered (title) paragraphs
+            if getattr(_p, 'skip', False):
+                continue  # FIX 16b: skip cover/TOC elements
             _hl = _p.patterns.get('heading_level', 0)
             _is_bold_p = _p.patterns.get('is_all_bold', False)
-            if _hl > 1:   # > 1: skip Heading 1 (document title)
+            if _hl > 0:   # FIX 16b: include Heading #1 (was > 1)
                 _raw_levels.append(_hl)
                 if _is_bold_p:
                     _raw_levels_bold.append(_hl)
@@ -3049,7 +3768,7 @@ class PatternBasedTagger:
                 _m = _re_norm.search(r'heading\s*[#\s]?(\d+)', _p.style, _re_norm.IGNORECASE)
                 if _m:
                     lvl = int(_m.group(1))
-                    if lvl > 1:  # skip Heading 1
+                    if lvl > 0 and not getattr(_p, 'skip', False):  # FIX 16b: include level 1
                         _raw_levels.append(lvl)
         _min_hl = min(_raw_levels) if _raw_levels else 2  # default=2 if no headings
 
@@ -3216,10 +3935,18 @@ class PatternBasedTagger:
                 _ph.patterns['inline_header'] = True
 
         prev_para = None
+        _BILINGUAL_LOGO_RE = re.compile(
+            r'Autorit[e\xe9]s?\s+canadiennes|en\s+valeurs\s+mobili[e\xe8]res?', re.I
+        )
         for para in paragraphs:
             if para.skip:
                 continue
-            
+            # Skip garbled bilingual CSA logo/watermark paragraphs — these appear in
+            # the DOCX with a heading style but are not real section headings.
+            if (_BILINGUAL_LOGO_RE.search(para.text)
+                    and len(para.text.split()) <= 15):
+                continue
+
             if self._is_line_item(para, prev_para):
                 para.final_tag = 'LINE'
                 para.confidence = 0.85
@@ -3255,6 +3982,19 @@ class PatternBasedTagger:
                     and not _re_ital.match(r'^\d', _ts_ital)  # not numeric code
                     and len(_ts_ital) >= 4              # not a trivial fragment
                     and not _prev_is_form_item          # not an inline-continuation fragment
+                    # Cross-reference lines (table left-column annotations) are not headings
+                    and not _re_ital.match(r'^See\s+(?:section|subsection|paragraph)\s+', _ts_ital, _re_ital.IGNORECASE)
+                    and not _re_ital.match(r'^See\s+also\s*:', _ts_ital, _re_ital.IGNORECASE)
+                    # FIX 51 (2026-08-24): a bare "Reference:"/"References:" label (no
+                    # citation text on the same line -- the citation is the NEXT
+                    # paragraph) is a repeating citation-list field, not a subsection
+                    # heading. Confirmed via 15-601 (BC): this label recurs 10+ times
+                    # throughout the document, each time immediately followed by a
+                    # statute/case citation paragraph -- it was being promoted to a
+                    # duplicate BLOCK3 heading every single occurrence (matches the
+                    # "Reference:/References: entries appear as section headings"
+                    # G-check EXTRA SECTIONS finding).
+                    and not _re_ital.match(r'^References?:$', _ts_ital, _re_ital.IGNORECASE)
                 )
                 if _is_ital_heading:
                     para.final_tag = 'BLOCK3'
@@ -3278,7 +4018,14 @@ class PatternBasedTagger:
                 # lettered/numbered section headings in notice/circular documents.
                 _ts_bold_is_caps = (len(_ts_bold) > 2 and all(c.isupper() or not c.isalpha() for c in _ts_bold))
                 _blk_by_prefix = None
-                if _re_bold.match(r'^[A-Z]\.\s+\S', _ts_bold):            # A. Title → BLOCK3
+                # Roman numeral prefix (I., II., III., IV., V. …) → BLOCK2 (top-level section)
+                # Single-letter prefix A., B., C. … → BLOCK3 (sub-section) — checked after
+                _roman_pfx_bold = _re_bold.match(r'^([IVX]+)\.\s+\S', _ts_bold)
+                if (_roman_pfx_bold and _re_bold.match(
+                        r'^M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$',
+                        _roman_pfx_bold.group(1))):
+                    _blk_by_prefix = 2                                      # Roman numeral → BLOCK2
+                elif _re_bold.match(r'^[A-Z]\.\s+\S', _ts_bold):            # A. Title → BLOCK3
                     _blk_by_prefix = 3
                 elif _re_bold.match(r'^\([A-Z]\)\s', _ts_bold):            # (A) Title → BLOCK3
                     _blk_by_prefix = 3
@@ -3354,12 +4101,9 @@ class PatternBasedTagger:
                 elif _hl_bold > 0:
                     # Bold heading with known DOCX level — use normalized depth
                     _blk = _h2b(_hl_bold, is_bold=True)
-                    # For Notice docs (not Annual Report) where only one heading level
-                    # is seen, use context: Title-Case after ALL-CAPS → BLOCK3
-                    if (not _is_annual and _distinct_levels <= 1 and _blk == 2
-                            and _last_block_level == 2 and _last_block_was_caps
-                            and _is_title_case_heading(_ts_bold)):
-                        _blk = 3
+                    # FIX 15: Removed "Title-Case after ALL-CAPS → BLOCK3" promotion.
+                    # Flat Notice docs use BLOCK2 for ALL main section headings regardless
+                    # of casing. Sub-sections get BLOCK3 only via explicit prefix/indent.
                     # Recurrence override: frequently repeating heading = deep sub-section
                     _freq_key = _ts_bold.strip().lower()[:60]
                     if _heading_freq.get(_freq_key, 0) >= _FREQ_THR and _blk <= 3:
@@ -3381,12 +4125,8 @@ class PatternBasedTagger:
                     # Indent-based override: multi-indent doc (annual reports etc.)
                     elif _has_multi_indent:
                         _blk = _indent_to_blk(para.left_indent)
-                    elif (not _is_annual and _last_block_level in (1, 2)
-                            and _last_block_was_caps
-                            and _is_title_case_heading(_ts_bold)
-                            and not _ts_bold_is_caps):
-                        # Title-Case bold heading follows ALL-CAPS bold heading → one deeper
-                        _blk = (_last_block_level + 1) if _use_block1 else 3
+                    # FIX 15: Removed "Title-Case after ALL-CAPS → BLOCK3" promotion.
+                    # Bold title-case main-section headings (no HL, no prefix) → BLOCK2.
                     para.final_tag = f'BLOCK{_blk}'
                     _last_block_level = _blk
                     _last_block_was_caps = _ts_bold_is_caps
@@ -3406,7 +4146,13 @@ class PatternBasedTagger:
                     level = _hl2
                 _ts_blk = para.text.strip()
                 _ts_blk_is_caps = (len(_ts_blk) > 2 and all(c.isupper() or not c.isalpha() for c in _ts_blk))
-                if _re_blk.match(r'^[A-Z]\.\s+\S', _ts_blk) or _re_blk.match(r'^\([A-Z]\)\s', _ts_blk):
+                # Roman numeral prefix in non-bold heading → BLOCK2 (top-level section)
+                _roman_pfx_nb = _re_blk.match(r'^([IVX]+)\.\s+\S', _ts_blk)
+                if (_roman_pfx_nb and _re_blk.match(
+                        r'^M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$',
+                        _roman_pfx_nb.group(1))):
+                    _blk_level = 2   # Roman numeral prefix → BLOCK2
+                elif _re_blk.match(r'^[A-Z]\.\s+\S', _ts_blk) or _re_blk.match(r'^\([A-Z]\)\s', _ts_blk):
                     _blk_level = 3   # A. or (A) → BLOCK3
                 elif (_re_blk.match(r'^\d+\.\s+[A-Z]', _ts_blk) and len(_ts_blk.split()) <= 10):
                     _blk_level = 4   # 1. → BLOCK4
@@ -3416,11 +4162,7 @@ class PatternBasedTagger:
                     _blk_level = 5   # (a), (i), a. → BLOCK5
                 else:
                     _blk_level = _h2b(level, is_bold=False)
-                    # For Notice docs: Title-Case heading after ALL-CAPS → BLOCK3
-                    if (not _is_annual2 and _distinct_levels <= 1 and _blk_level == 2
-                            and _last_block_level == 2 and _last_block_was_caps
-                            and _is_title_case_heading(_ts_blk) and not _ts_blk_is_caps):
-                        _blk_level = 3
+                    # FIX 15: Removed "Title-Case after ALL-CAPS → BLOCK3" for non-bold headings.
                 # Stat-box caption in Annual Report (non-bold heading): numeric/% → P
                 _is_stat_box2 = (
                     _is_annual2
@@ -3450,6 +4192,9 @@ class PatternBasedTagger:
                     or (bool(_re_prov.match(
                             r'^(?:CIRO|The\s+\w+)\s+(?:must|shall|will|may)\b',
                             _ts_blk, _re_prov.IGNORECASE)) and _wc_prov >= 8)  # condition text
+                    # Cross-reference lines in table left-columns → P, not BLOCK
+                    or bool(_re_prov.match(r'^See\s+(?:section|subsection|paragraph)\s+', _ts_blk, _re_prov.IGNORECASE))
+                    or bool(_re_prov.match(r'^See\s+also\s*:', _ts_blk, _re_prov.IGNORECASE))
                 )
                 if _is_stat_box2 or _is_inline_header2 or _is_provision_text:
                     para.final_tag = 'P'
@@ -3490,10 +4235,42 @@ class PatternBasedTagger:
                         elif (_re_p2.match(r'^\([a-z]\)\s', _frb)
                                 or _re_p2.match(r'^\([ivxlcdm]+\)\s', _frb, _re_p2.IGNORECASE)):
                             _blk_by_mixed = 5
+                # FIX 15b: "Effectively all-bold" short heading.
+                # ABBYY sometimes produces runs with bold=None (inherited from style)
+                # alongside bold=True runs in the same heading paragraph, causing
+                # is_all_bold=False even when the full text is visually all-bold.
+                # Detect via bold character fraction; if >85%, treat as BLOCK2.
+                _eff_bold_upgrade = False
+                if (_blk_by_mixed is None
+                        and para.patterns.get('has_bold_runs', False)
+                        and not para.patterns.get('is_centered')
+                        and not para.patterns.get('has_email')
+                        and not para.patterns.get('has_phone')):
+                    _wc_eff = len(_ts_p2.split())
+                    _ne_runs_eff = [r for r in para.runs if r.text.strip()]
+                    if (_wc_eff <= 10 and _wc_eff >= 1
+                            and not _ts_p2.endswith('.')
+                            and _ts_p2[:1].isupper()
+                            and not _re_p2.match(r'^[\(\[]', _ts_p2)  # not a provision
+                            and _ne_runs_eff):
+                        _bold_chars_eff = sum(len(r.text) for r in _ne_runs_eff if r.bold)
+                        _total_chars_eff = sum(len(r.text) for r in _ne_runs_eff)
+                        if _total_chars_eff and (_bold_chars_eff / _total_chars_eff) > 0.85:
+                            _blk_eff = 1 if _use_block1 else 2
+                            _ts_p2_is_caps = (len(_ts_p2) > 2 and
+                                all(c.isupper() or not c.isalpha() for c in _ts_p2))
+                            para.final_tag = f'BLOCK{_blk_eff}'
+                            _last_block_level = _blk_eff
+                            _last_block_was_caps = _ts_p2_is_caps
+                            para.confidence = 0.85
+                            _eff_bold_upgrade = True
+
                 if _blk_by_mixed is not None:
                     para.final_tag = f'BLOCK{_blk_by_mixed}'
                     _last_block_level = _blk_by_mixed
                     _last_block_was_caps = False
+                elif _eff_bold_upgrade:
+                    pass  # already set above
                 # Roman sub-items (i)/(ii)/... → P2 regardless of indent_level
                 # FIX: require roman to START with i/v/x to avoid classifying alpha
                 # sub-items (c)(d)(l)(m) as roman numerals and incorrectly giving P2.
@@ -4148,9 +4925,14 @@ STEP 1 — ALL-CAPS rule (DocType=Notice ONLY — SKIP for AnnualReport):
 
 STEP 2 — Title-Case headings in Notice docs:
   If DocType=Notice AND Title-Case (not ALL-CAPS):
-    → BLOCK3 if LastBlock=BLOCK2 AND heading is clearly a sub-section
-    → BLOCK2 if LastBlock=None or LastBlock=BLOCK3 (starting fresh)
-    → BLOCK2 if it's an appendix/chapter title ("Appendix A", "Guidelines", etc.)
+    → DEFAULT: BLOCK2 (flat hierarchy — ALL main section headings are BLOCK2 regardless of casing)
+    → BLOCK3 ONLY when heading has an EXPLICIT sub-section marker:
+        • Lettered sub-item: "(A)", "(B)", "(i)", "(ii)", etc.
+        • Numbered sub-section: "1.1", "2.3" etc.
+    → BLOCK2 for "Introduction", "Background", "Summary", "Executive Summary",
+        "Questions", "Consultation", "Appendix A", "Request for Comments",
+        even when these follow an ALL-CAPS heading.
+  Roman-numeral prefix (I., II., III., IV., V.) → BLOCK2 (NOT BLOCK3).
 
 STEP 3 — Parallel major section check → BLOCK2:
   If current introduces a completely new top-level section regardless of LastBlock:
@@ -4182,13 +4964,6 @@ STEP 5 — Tie-breaker for AnnualReport (genuinely ambiguous, no strong indicato
 •••••••••••• INLINE FORMATTING ••••••••••••
 EM: italic regulation names, Act titles within P/ITEM/LINE.
 BOLD: inline bold within P (HasBold paragraphs).
-
-•••••••••••• CRITICAL TEXT FIDELITY ••••••••••••
-Your ONLY job is to apply SGML structural TAGS. NEVER alter the source text.
-• Reproduce ALL numbers, section references, and punctuation EXACTLY as given.
-• NEVER change "14.1.3" to any other value, or "3(2)" to "3 2)", or "(3.1)" to "(3.(1)".
-• NEVER add, remove, or reposition any parenthesis or bracket.
-• NEVER paraphrase, summarise, or omit any word from the source paragraph.
 
 DocType={doc_type_hint}
 
@@ -4260,8 +5035,8 @@ print("   NEW v11: RAGManager injects relevant keying rules + vendor examples pe
 
 def _get_opus_client():
     """
-    Authenticate with Thomson Reuters AI Platform for Claude Opus 4.6.
-    Falls back to existing Sonnet client if Opus auth fails.
+    Authenticate with Thomson Reuters AI Platform for Claude Opus.
+    Raises RuntimeError if auth fails — NO Sonnet fallback.
     Returns: (client, model_name)
     """
     try:
@@ -4277,10 +5052,17 @@ def _get_opus_client():
                 opus_c = Anthropic(api_key=token, http_client=httpx.Client(verify=False))
                 print(f"   ✅ Opus auth OK → {OPUS_MODEL}")
                 return opus_c, OPUS_MODEL
-        print(f"   ⚠️  Opus auth HTTP {resp.status_code} — falling back to Sonnet")
+            raise RuntimeError(
+                f"Opus auth succeeded (HTTP 200) but token is empty. "
+                f"Check TR workspace '{WORKSPACE_ID}' has Opus access."
+            )
+        raise RuntimeError(
+            f"Opus auth failed: HTTP {resp.status_code} — {resp.text[:200]}"
+        )
+    except RuntimeError:
+        raise
     except Exception as e:
-        print(f"   ⚠️  Opus auth failed ({e}) — falling back to Sonnet")
-    return client, ANTHROPIC_MODEL
+        raise RuntimeError(f"Opus auth exception: {e}") from e
 
 
 class InlineAgent:
@@ -4293,11 +5075,13 @@ class InlineAgent:
     - ITEM / P / LINE: apply EM regex patterns + LLM for italic runs
     """
 
-    def __init__(self, llm_client, model: str):
+    def __init__(self, llm_client, model: str, rag_manager=None):
         self.client = llm_client
         self.model = model
+        self.rag_manager = rag_manager
 
-    def process_with_context(self, all_paragraphs: list, structural_map: dict) -> dict:
+    def process_with_context(self, all_paragraphs: list, structural_map: dict,
+                             exclude_vendor_source: str = None) -> dict:
         """
         Detect EM spans using structural context. Skips BLOCK headings.
         Returns: {para.index: [{"start", "end", "tag", "source"}]}
@@ -4330,7 +5114,7 @@ class InlineAgent:
             and not structural_map.get(p.index, "P").startswith("BLOCK")
         ]
         if candidates and self.client:
-            llm_results = self._llm_em_pass(candidates, structural_map)
+            llm_results = self._llm_em_pass(candidates, structural_map, exclude_vendor_source)
             for para_idx, new_spans in llm_results.items():
                 existing = results.get(para_idx, [])
                 for s in new_spans:
@@ -4359,15 +5143,31 @@ class InlineAgent:
     def _needs_llm(self, para) -> bool:
         return bool(para.patterns.get("has_italic_runs") or para.patterns.get("is_all_italic"))
 
-    def _llm_em_pass(self, paragraphs: list, structural_map: dict) -> dict:
+    def _llm_em_pass(self, paragraphs: list, structural_map: dict,
+                     exclude_vendor_source: str = None) -> dict:
         results = {}
         for i in range(0, len(paragraphs), 15):
-            batch_results = self._call_em_llm(paragraphs[i:i + 15], structural_map)
+            batch_results = self._call_em_llm(paragraphs[i:i + 15], structural_map, exclude_vendor_source)
             results.update(batch_results)
         return results
 
-    def _call_em_llm(self, batch: list, structural_map: dict) -> dict:
-        system = """You are EM_AGENT for Canadian securities SGML <EM> inline tags.
+    def _call_em_llm(self, batch: list, structural_map: dict,
+                     exclude_vendor_source: str = None) -> dict:
+        # FIX (2026-08-22): InlineAgent previously had zero keying-spec/RAG grounding
+        # at all — purely a hardcoded prompt. Give it targeted keying-rule retrieval
+        # (rules only, not vendor examples — the indexed examples have all inline
+        # markup including <EM> stripped out, so they carry no italic/EM signal).
+        rag_context = ""
+        if self.rag_manager is not None:
+            try:
+                rag_context = self.rag_manager.get_context_for_batch(
+                    [p.text for p in batch], include_examples=False,
+                    exclude_source=exclude_vendor_source,
+                )
+            except Exception:
+                pass
+        rag_section = f"\n{rag_context}\n" if rag_context else ""
+        system = f"""You are EM_AGENT for Canadian securities SGML <EM> inline tags.
 Apply <EM> ONLY to text spans that are italic (matching italic_runs listed).
 Also apply to: Act/Regulation titles (Securities Act, NI 31-103, etc.) if italic.
 Do NOT apply EM to non-italic text or heading paragraphs (BLOCK tags).
@@ -4375,8 +5175,8 @@ CRITICAL — Do NOT apply EM to these even when italic:
 - Subsection/paragraph/section cross-references: subsection 28(1), paragraph 19(2), section 7(1), clause 4(a), subclause 3(ii)
 - Short generic statute references mid-sentence when not the main subject: "under the Bank Act", "pursuant to the Securities Act" — only wrap if the Act title is THE italic span, not surrounding text
 - Section numbering like "s. 38", "s. 7(2)", "(s. 41)"
-RETURN: JSON array one entry per input para:
-[{"para_idx": 0, "em_spans": [{"start": 5, "end": 19}]}, ...]
+{rag_section}RETURN: JSON array one entry per input para:
+[{{"para_idx": 0, "em_spans": [{{"start": 5, "end": 19}}]}}, ...]
 Empty em_spans [] if no italic matches."""
         user = "Find EM spans (italic only). Return ONLY JSON array:\n\n"
         for idx, para in enumerate(batch):
@@ -4436,14 +5236,16 @@ class ValidatorAgent:
     Batch size: 8 paragraphs per call.
     """
 
-    def __init__(self, llm_client, model: str, keying_specs: str, threshold: float = 0.75):
+    def __init__(self, llm_client, model: str, keying_specs: str, threshold: float = 0.75,
+                 rag_manager=None):
         self.client = llm_client
         self.model = model
         self.keying_specs = keying_specs
         self.threshold = threshold
+        self.rag_manager = rag_manager
 
     def validate_uncertain(self, uncertain_paras: list, structural_map: dict,
-                           inline_map: dict) -> dict:
+                           inline_map: dict, exclude_vendor_source: str = None) -> dict:
         """
         Validate structural decisions for low-confidence paragraphs.
         Returns: {para.index: {"final_tag": str}} for corrections only.
@@ -4453,20 +5255,34 @@ class ValidatorAgent:
         corrections = {}
         for i in range(0, len(uncertain_paras), 8):
             batch_corrections = self._call_validator_llm(
-                uncertain_paras[i:i + 8], structural_map, inline_map
+                uncertain_paras[i:i + 8], structural_map, inline_map, exclude_vendor_source
             )
             corrections.update(batch_corrections)
         return corrections
 
-    def _call_validator_llm(self, batch: list, structural_map: dict, inline_map: dict) -> dict:
+    def _call_validator_llm(self, batch: list, structural_map: dict, inline_map: dict,
+                            exclude_vendor_source: str = None) -> dict:
+        # FIX (2026-08-22): replaced the old blind self.keying_specs[:1500] (an
+        # arbitrary, untargeted excerpt of whatever happens to be first in the file)
+        # with RAG retrieval targeted at this batch's own text. Falls back to the
+        # blind excerpt only if RAG is unavailable, so grounding is never fully lost.
+        rag_context = ""
+        if self.rag_manager is not None:
+            try:
+                rag_context = self.rag_manager.get_context_for_batch(
+                    [p.text for p in batch], exclude_source=exclude_vendor_source
+                )
+            except Exception:
+                pass
+        _specs_section = rag_context if rag_context else self.keying_specs[:1500]
         system = f"""You are VALIDATOR_AGENT for Canadian securities SGML structural tagging.
 Review uncertain structural tag decisions and correct them only when clearly wrong.
 HEADING signals: AllCaps, Title Case (≥60% cap words), short (≤25 words), no period
 ITEM signals: starts with list marker (a., (a), (i), 1., bullet)
 P signals: body text, ends with period, long sentence, narrative content
 LINE signals: address/contact lines, standalone phone/email/URL
-KEYING SPECS (excerpt):
-{self.keying_specs[:1500]}
+KEYING SPECS / RAG CONTEXT:
+{_specs_section}
 Return JSON array, one entry per input para:
 [{{"para_idx": 0, "action": "confirm", "final_tag": "P"}}, {{"para_idx": 1, "action": "correct", "final_tag": "BLOCK3"}}]
 Only use action="correct" when highly confident the current tag is wrong."""
@@ -4516,19 +5332,43 @@ class StructuralAgent:
     Identical to v13 StructuralAgent (no regression). Uses Opus 4.6.
     """
 
-    def __init__(self, llm_client, model: str, keying_specs: str):
+    def __init__(self, llm_client, model: str, keying_specs: str, rag_manager=None):
         self.client = llm_client
         self.model = model
         self.keying_specs = keying_specs
+        self.rag_manager = rag_manager
         self.batch_size = SYSTEM_CONFIG["llm_batch_size"]
 
     def process_ambiguous(self, paragraphs, sorted_full, index_to_pos,
-                          text_counts, rag_context: str = "") -> list:
+                          text_counts, exclude_vendor_source: str = None) -> list:
         all_decisions = []
         _recent_context = []  # sliding window of last 5 confirmed decisions
+        # FIX (2026-08-22): only skip RAG's keying-RULE retrieval (redundant with the
+        # full spec below) when a substantial spec is actually present in this prompt.
+        # Some callers (e.g. the lightweight test harness) pass keying_specs='' — in
+        # that case RAG rules are the ONLY grounding available and must not be skipped.
+        _has_full_spec = bool(self.keying_specs) and len(self.keying_specs) > 1000
         for i in range(0, len(paragraphs), self.batch_size):
             batch = paragraphs[i:i + self.batch_size]
             print(f'   BLOCK_AGENT batch {i // self.batch_size + 1}: {len(batch)} paras')
+
+            # FIX (2026-08-21): retrieve RAG context fresh for THIS batch's own text —
+            # was computed once for the whole document from only paragraphs[0:5] and
+            # reused unchanged for every batch, so a rule/example relevant to paragraph
+            # 400 was never fetched (only whatever matched the cover-page paragraphs).
+            rag_context = ""
+            if self.rag_manager is not None:
+                try:
+                    rag_context = self.rag_manager.get_context_for_batch(
+                        [p.text for p in batch],
+                        include_rules=not _has_full_spec,
+                        exclude_source=exclude_vendor_source,
+                    )
+                except Exception:
+                    pass
+            if rag_context:
+                print(f'      [RAG: {len(rag_context)} chars retrieved for this batch]')
+
             decisions = self._call_structural_llm(
                 batch, sorted_full, index_to_pos, text_counts, rag_context,
                 recent_context=_recent_context
@@ -4697,17 +5537,22 @@ class SequentialSGMLLayer:
         print("   SequentialSGMLLayer v14: authenticating agents...")
         opus_client, opus_model = _get_opus_client()
         self.model = opus_model
-        self.structural_agent = StructuralAgent(opus_client, opus_model, keying_specs)
-        self.inline_agent = InlineAgent(opus_client, opus_model)
-        self.validator_agent = ValidatorAgent(opus_client, opus_model, keying_specs)
+        self.structural_agent = StructuralAgent(opus_client, opus_model, keying_specs, rag_manager=rag_manager)
+        self.inline_agent = InlineAgent(opus_client, opus_model, rag_manager=rag_manager)
+        self.validator_agent = ValidatorAgent(opus_client, opus_model, keying_specs, rag_manager=rag_manager)
         print(f"   ✅ StructuralAgent (BLOCK_AGENT): {opus_model}")
         print(f"   ✅ InlineAgent (context-aware EM, skips headings): {opus_model}")
         print(f"   ✅ ValidatorAgent (confidence<0.75 correction): {opus_model}")
 
-    def process_ambiguous_paragraphs(self, paragraphs, full_paragraphs=None):
+    def process_ambiguous_paragraphs(self, paragraphs, full_paragraphs=None,
+                                     exclude_vendor_source: str = None):
         """
         Drop-in replacement for AgenticLLMLayer.process_ambiguous_paragraphs.
         Sequential: Structure → Inline (with context) → Validate.
+        exclude_vendor_source: vendor SGM filename (e.g. "Blanket-Order-135.sgm") to
+        exclude from RAG's example retrieval — normally the vendor transcript of the
+        SAME document currently being converted, to prevent it being retrieved as its
+        own "similar example" (confirmed happening in practice without this).
         """
         if not paragraphs or not self.client:
             return paragraphs
@@ -4726,19 +5571,15 @@ class SequentialSGMLLayer:
             p.text.strip().lower()[:80] for p in sorted_full if p.text.strip()
         )
 
-        rag_context = ""
-        if self.rag_manager:
-            try:
-                rag_context = self.rag_manager.get_context_for_batch(
-                    [p.text for p in paragraphs[:5]]
-                )
-            except Exception:
-                pass
+        # RAG context is now retrieved per-batch inside StructuralAgent.process_ambiguous
+        # (was a single one-shot lookup here from only paragraphs[:5], reused unchanged for
+        # every batch across the whole document — see FIX 2026-08-21 in StructuralAgent).
 
         # ── Stage 1: STRUCTURAL ─────────────────────────────────────────────
         print('\n   🔵 Stage 1: StructuralAgent (structural decisions)...')
         structural_decisions = self.structural_agent.process_ambiguous(
-            paragraphs, sorted_full, index_to_pos, text_counts, rag_context
+            paragraphs, sorted_full, index_to_pos, text_counts,
+            exclude_vendor_source=exclude_vendor_source
         )
         for para, decision in zip(paragraphs, structural_decisions):
             para.final_tag = decision.get("tag_type", "P")
@@ -4754,7 +5595,9 @@ class SequentialSGMLLayer:
 
         # ── Stage 2: INLINE with structural context ──────────────────────
         print('\n   🟢 Stage 2: InlineAgent (EM with structural context)...')
-        inline_decisions = self.inline_agent.process_with_context(sorted_full, structural_map)
+        inline_decisions = self.inline_agent.process_with_context(
+            sorted_full, structural_map, exclude_vendor_source=exclude_vendor_source
+        )
         print(f'   ✅ InlineAgent: {len(inline_decisions)} paragraphs with EM spans')
 
         # ── Stage 3: VALIDATE uncertain decisions ─────────────────────
@@ -4764,7 +5607,8 @@ class SequentialSGMLLayer:
         if uncertain:
             print(f'\n   🟡 Stage 3: ValidatorAgent ({len(uncertain)} uncertain decisions)...')
             corrections = self.validator_agent.validate_uncertain(
-                uncertain, structural_map, inline_decisions
+                uncertain, structural_map, inline_decisions,
+                exclude_vendor_source=exclude_vendor_source
             )
             n_corrected = 0
             for para in paragraphs:
@@ -4790,8 +5634,12 @@ class SequentialSGMLLayer:
             if not hasattr(para, "inline_formatting") or para.inline_formatting is None:
                 para.inline_formatting = []
             for span in em_spans:
+                # Dedup: skip LLM span if a pattern-based EM span already covers
+                # nearly the same range (within 5 chars on either boundary).
                 if not any(
-                    t.get("tag") == "EM" and abs(t.get("start", -99) - span["start"]) < 4
+                    t.get("tag") == "EM"
+                    and abs(t.get("start", -99) - span["start"]) <= 5
+                    and abs(t.get("end", -99) - span["end"]) <= 5
                     for t in para.inline_formatting
                 ):
                     para.inline_formatting.append(span)
@@ -4958,6 +5806,10 @@ class SGMLGenerator:
         self.vendor_date_label_override = None # When set, use as LABEL attr for DATE tag (or None for no label)
         self.vendor_label_override = None      # When set, use as LABEL attr on POLIDOC element
         self.jurisdiction = ''           # Set by pipeline to enable jurisdiction-specific EM patterns in table cells
+        # FIX 15c: Default to 99 (allow all BLOCK2 containers in standalone mode).
+        # When vendor comparison is available, this gets overridden with the actual
+        # vendor BLOCK2 count. vendor_block2_budget=0 only for genuinely flat docs.
+        self.vendor_block2_budget = 99
 
     def set_images(self, images: List['ImageData']):
         self.images = images
@@ -5050,6 +5902,7 @@ class SGMLGenerator:
         #   "Annex A"            → LABEL="Annex"      N="A" TI=""
         _APP_RE = re.compile(
             r'^(Appendix|Annex|Schedule|Exhibit)'   # keyword
+            r'(?![a-zA-Z])'                         # not followed by a letter (avoids 'Annexes', 'Schedules')
             r'(?:'
             r'\s+([A-Z\d]+)'                        # optional letter/number (A, B, 1, 2 …)
             r')?'
@@ -5186,6 +6039,46 @@ class SGMLGenerator:
         # across the FULL document (including APPENDIX sections which are assembled above).
         # Must run after all sections are added — stamps often appear in APPENDIX FREEFORM.
         sgml = self._post_fix_dedup_block2(sgml)
+
+        # FIX 29A: BLOCK6 is not a valid SGML tag — always rename to BLOCK5.
+        sgml = self._post_fix_rename_block6_to_block5(sgml)
+
+        # FIX 29B: Fix unbalanced EM tags inside TI elements.
+        sgml = self._post_fix_balance_em_in_ti(sgml)
+
+        # FIX 33: Remove short TI elements (< 3 chars) from split multi-line headings.
+        sgml = self._post_fix_merge_short_ti(sgml)
+
+        # FIX 34: Fix doubled section numbers ("Section 4 4" → "Section 4").
+        sgml = self._post_fix_remove_doubled_section_num(sgml)
+
+        # FIX 35: Merge directly adjacent EM tags (</EM><EM>) into one.
+        sgml = self._post_fix_merge_adjacent_em(sgml)
+
+        # FIX 36: Restore dropped hyphens in self-X compounds.
+        sgml = self._post_fix_self_hyphen(sgml)
+
+        # FIX 37: Remove space inserted after hyphen in NI/OSC document numbers.
+        # e.g. "NI 31- 103" → "NI 31-103", "OSC Rule 11- 503" → "11-503"
+        sgml = self._post_fix_ni_number_hyphen_space(sgml)
+
+        # FIX 42: Merge <TI>PART N</TI> with immediately following title TI.
+        # e.g. <BLOCK2><TI>PART 4</TI>\n<BLOCK2><TI>EXEMPTION FROM...</TI>
+        #   → <BLOCK2><TI>PART 4 EXEMPTION FROM...</TI>
+        sgml = self._post_fix_merge_part_title(sgml)
+
+        # FIX 43: Merge <TI>X.Y</TI> section number with following title TI.
+        # e.g. <BLOCK2><TI>4.1</TI>\n<BLOCK2><TI>Exemption from...</TI>
+        #   → <BLOCK2><TI>4.1 Exemption from...</TI>
+        sgml = self._post_fix_merge_section_title(sgml)
+
+        # FIX 44: Remove duplicate consecutive PART/CHAPTER/SCHEDULE headings.
+        # TOC tables and content tables both converted to layout paragraphs produce
+        # the same heading twice. Remove the empty/duplicate first occurrence.
+        sgml = self._post_fix_dedup_part_headings(sgml)
+
+        # FIX 45: Remove consecutive all-caps empty BLOCK2 fragments (letterhead).
+        sgml = self._post_fix_remove_letterhead_fragments(sgml)
 
         # FIX 23: Rename BLOCK5 → BLOCK4 when vendor uses 0 BLOCK5.
         # Prevents false-tagging Low penalty without affecting structure.
@@ -6448,6 +7341,15 @@ class SGMLGenerator:
         if getattr(self, 'vendor_block2_norms', None):
             ln = self._post_fix_normalize_companion_blocks(ln)
         # FIX 29: Apply post-fixes to misclaw-generated SGML (same as non-misclaw path)
+        # FIX 29A: BLOCK6 is not valid — always rename to BLOCK5.
+        ln = self._post_fix_rename_block6_to_block5(ln)
+        # FIX 29B: Fix unbalanced EM inside TI.
+        ln = self._post_fix_balance_em_in_ti(ln)
+        # FIX 33-36: Same structural and text fixes as non-misclaw path.
+        ln = self._post_fix_merge_short_ti(ln)
+        ln = self._post_fix_remove_doubled_section_num(ln)
+        ln = self._post_fix_merge_adjacent_em(ln)
+        ln = self._post_fix_self_hyphen(ln)
         # FIX 23: Rename BLOCK5 → BLOCK4 when vendor uses 0 BLOCK5.
         if getattr(self, 'vendor_block5_count', 0) == 0:
             ln = self._post_fix_rename_block5(ln)
@@ -6594,9 +7496,8 @@ class SGMLGenerator:
                             if _is_split_heading:
                                 _h_entity = self.convert_entities(_h_raw)
                                 _b_entity = self.convert_entities(_b_raw)
-                                # Emit BLOCK2 heading directly (open_blocks managed by
-                                # _apply_container_blocks — just emit flat SGML here)
-                                sgml.append(f'<BLOCK2>\n<TI>{_h_entity}</TI>')
+                                # Closed form so _apply_container_blocks can recognise it.
+                                sgml.append(f'<BLOCK2><TI>{_h_entity}</TI></BLOCK2>')
                                 open_blocks.clear()
                                 open_blocks.append(2)
                                 sgml.append(f'<P>{_b_entity}</P>')
@@ -6712,10 +7613,6 @@ class SGMLGenerator:
         # Fix #9: Merge false page-break P splits (mid-sentence </P><P>continuation)
         sgml = self._fix_pagebreak_p_splits(sgml)
 
-        # FIX-COMPOUND-LABEL: Restore split compound labels and strip bracket spaces.
-        # LLM sometimes outputs "(i. (1)" for "(i.1)" or adds spaces inside brackets.
-        sgml = self._fix_compound_labels(sgml)
-
         # FIX 1C: Remove spurious </P> that immediately precedes <ITEM> blocks.
         # Pattern: ...intro text</P>\n<P>\n<ITEM>... → ...intro text\n<ITEM>...
         # Vendor keeps the list-introducer sentence open inside the same <P> as the ITEMs.
@@ -6727,42 +7624,126 @@ class SGMLGenerator:
         # replace the misread digits with the expected letters.
         sgml = self._fix_ocr_item_labels(sgml)
 
+        # FIX-BLOCK-EARLY-CLOSE: Reopen BLOCK tags that close right after </TI>.
+        # Skip when use_container_blocks=True — _apply_container_blocks handles timing
+        # and this function removes </BLOCKn> which breaks BLOCK_RE matching downstream.
+        if not self.use_container_blocks:
+            sgml = self._fix_premature_block_close('\n'.join(sgml)).split('\n')
+
+        # FIX-ORPHANED-BLOCK-CLOSE: Remove </BLOCKn> tags with no matching open.
+        sgml = self._fix_orphaned_block_closes('\n'.join(sgml)).split('\n')
+
         return sgml
 
-    def _fix_compound_labels(self, sgml_lines: List[str]) -> List[str]:
-        """FIX-COMPOUND-LABEL: Repair compound list labels split by the LLM.
+    def _fix_premature_block_close(self, sgml: str) -> str:
+        """Reopen BLOCK tags that close too early (only TI inside).
 
-        When the LLM receives a paragraph starting with a compound label like "(i.1)"
-        or "(3.1)", it sometimes outputs it as "(i. (1)" or "(3. (1)" — splitting the
-        compound into a roman/letter prefix and a separate parenthesised number.
-
-        This method restores the original compact form:
-          "(i. (1)"  → "(i.1)"
-          "(3. (1)"  → "(3.1)"
-
-        FIX-B1: Applies to ALL SGML lines (no line-type guard) because the LLM can
-        produce split compound labels on any line type (P, ITEM, TI, LINE, etc.).
-        FIX-B2: Also strips accidental spaces added inside brackets:
-          "( a )"  → "(a)"  / "[ a ]" → "[a]"
+        Pattern: <BLOCKn>...<TI>text</TI></BLOCKn> followed by <P>/<ITEM> content.
+        Repair: remove premature </BLOCKn> and re-insert at next block boundary.
         """
-        import re as _re_cl
-        _SPLIT_LABEL_RE = _re_cl.compile(
-            r'\(([a-zA-Z0-9]+)\.\s*\(([a-zA-Z0-9]+)\)',
-        )
-        _OPEN_SPACE_RE  = _re_cl.compile(r'([\(\[])\s+')
-        _CLOSE_SPACE_RE = _re_cl.compile(r'\s+([\)\]])')
-        # FIX-B3: LLM drops opening paren from subsection refs: "3(2)" → "3 2)"
-        # Matches digit(s) + space + digit(s) + ")" immediately after a tag close.
-        _MISS_OPEN_RE   = _re_cl.compile(r'(?<=>)(\d{1,3})\s+(\d{1,3})\)')
-        result = list(sgml_lines)
-        for i, line in enumerate(result):
-            new_line = _SPLIT_LABEL_RE.sub(r'(\1.\2)', line)
-            new_line = _OPEN_SPACE_RE.sub(r'\1', new_line)
-            new_line = _CLOSE_SPACE_RE.sub(r'\1', new_line)
-            new_line = _MISS_OPEN_RE.sub(r'\1(\2)', new_line)
-            if new_line != line:
-                result[i] = new_line
-        return result
+        if 'BLOCK' not in sgml:
+            return sgml
+
+        CONTENT_RE  = re.compile(r'^<(?:P|P1|P2|P3|P4|ITEM|LINE|QUOTE|FOOTNOTE)\b')
+        BLOCK_OPEN  = re.compile(r'^<BLOCK(\d+)(?:\s[^>]*)?>$')
+        BLOCK_CLOSE = re.compile(r'^</BLOCK(\d+)>$')
+        SECTION_END = re.compile(r'^</(?:FREEFORM|POLIDOC|APPENDIX|SCHEDULE)>')
+        EARLY_CLOSE = re.compile(r'^(.*</TI>)</BLOCK(\d+)>\s*$')
+
+        lines  = sgml.split('\n')
+        result = []
+        i = 0
+
+        while i < len(lines):
+            stripped = lines[i].strip()
+            m = EARLY_CLOSE.match(stripped)
+            if m:
+                block_level = int(m.group(2))
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if j < len(lines) and CONTENT_RE.match(lines[j].strip()):
+                    result.append(lines[i].rstrip().replace(f'</BLOCK{block_level}>', ''))
+                    i += 1
+                    inserted_close = False
+                    while i < len(lines):
+                        curr = lines[i].strip()
+                        mb_open  = BLOCK_OPEN.match(curr)
+                        mb_close = BLOCK_CLOSE.match(curr)
+                        me_flat  = EARLY_CLOSE.match(curr)
+                        if SECTION_END.match(curr):
+                            result.append(f'</BLOCK{block_level}>')
+                            result.append(lines[i])
+                            i += 1
+                            inserted_close = True
+                            break
+                        elif me_flat and int(me_flat.group(2)) <= block_level:
+                            # Another flat BLOCK at same/higher level — close current first.
+                            result.append(f'</BLOCK{block_level}>')
+                            inserted_close = True
+                            break
+                        elif mb_open and int(mb_open.group(1)) <= block_level:
+                            result.append(f'</BLOCK{block_level}>')
+                            result.append(lines[i])
+                            i += 1
+                            inserted_close = True
+                            break
+                        elif mb_close and int(mb_close.group(1)) <= block_level:
+                            result.append(lines[i])
+                            i += 1
+                            inserted_close = True
+                            break
+                        else:
+                            result.append(lines[i])
+                            i += 1
+                    if not inserted_close:
+                        result.append(f'</BLOCK{block_level}>')
+                    continue
+            result.append(lines[i])
+            i += 1
+
+        return '\n'.join(result)
+
+    def _fix_orphaned_block_closes(self, sgml: str) -> str:
+        """Remove </BLOCKn> closing tags that have no matching open."""
+        if 'BLOCK' not in sgml:
+            return sgml
+        block_re = re.compile(r'<(/?)BLOCK(\d+)(\s[^>]*)?>', re.IGNORECASE)
+        stack: list = []
+        has_orphan = False
+        for m in block_re.finditer(sgml):
+            closing = m.group(1) == '/'
+            level = int(m.group(2))
+            if closing:
+                if level in stack:
+                    idx = len(stack) - 1 - stack[::-1].index(level)
+                    stack = stack[:idx]
+                else:
+                    has_orphan = True
+            else:
+                stack.append(level)
+        if not has_orphan:
+            return sgml
+        parts = re.split(r'(</?BLOCK\d+(?:\s[^>]*)?>)', sgml, flags=re.IGNORECASE)
+        stack2: list = []
+        result = []
+        for part in parts:
+            m = re.match(r'<(/?)BLOCK(\d+)(\s[^>]*)?>', part, re.IGNORECASE)
+            if not m:
+                result.append(part)
+                continue
+            closing = m.group(1) == '/'
+            level = int(m.group(2))
+            if closing:
+                if level in stack2:
+                    idx = len(stack2) - 1 - stack2[::-1].index(level)
+                    stack2 = stack2[:idx]
+                    result.append(part)
+                # else: orphaned — drop it
+            else:
+                stack2.append(level)
+                result.append(part)
+        return ''.join(result)
 
     def _fix_ti_mdash_spacing(self, sgml_lines: List[str]) -> List[str]:
         """Fix 13A: Add spaces around &mdash; in TI tags when vendor uses spaced format.
@@ -7530,6 +8511,21 @@ class SGMLGenerator:
                     tag = 'BLOCK3' if b2_depth > 0 else 'BLOCK2'
                     result.append(f'<{tag}><TI>{inner}</TI></{tag}>')
                     continue
+            # FIX Bug 4: also convert <P><BOLD>text</BOLD></P> bold-only headings
+            # (same heuristics — bold headings in regulatory docs map to BLOCK2/BLOCK3)
+            m_bold = _re18c.match(r'^<P><BOLD>(.*?)</BOLD></P>$', stripped)
+            if m_bold:
+                inner = m_bold.group(1).strip()
+                plain = _re18c.sub(r'<[^>]+>', '', inner).strip()
+                words = plain.split()
+                if (1 <= len(words) <= 25
+                        and words[0][:1].isupper()
+                        and not plain.endswith(('.', ',', ';', ':'))
+                        and '@' not in plain
+                        and not _re18c.search(r'https?://', plain)):
+                    tag = 'BLOCK3' if b2_depth > 0 else 'BLOCK2'
+                    result.append(f'<{tag}><TI>{inner}</TI></{tag}>')
+                    continue
             result.append(line)
         return result
 
@@ -7809,6 +8805,250 @@ class SGMLGenerator:
             result.append(ln)
             i += 1
         return result
+
+    def _post_fix_rename_block6_to_block5(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 29A: BLOCK6 is not a valid SGML tag — always rename to BLOCK5."""
+        result = []
+        for ln in sgml_lines:
+            ln = ln.replace('<BLOCK6>', '<BLOCK5>').replace('</BLOCK6>', '</BLOCK5>')
+            result.append(ln)
+        return result
+
+    def _post_fix_balance_em_in_ti(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 29B: Balance unmatched EM tags inside TI elements.
+
+        Handles the case where an EM tag opened in a preceding paragraph bleeds
+        into the TI (orphan </EM> before first <EM>) or an EM is left unclosed
+        before </TI>. Uses sequential depth tracking, not count comparison.
+        """
+        import re as _re_em
+        sgml = '\n'.join(sgml_lines)
+        _ti_re = _re_em.compile(r'(<TI>)(.*?)(</TI>)', _re_em.DOTALL)
+        _em_tok = _re_em.compile(r'(</?EM>)')
+
+        def _fix_ti(m):
+            open_tag, content, close_tag = m.group(1), m.group(2), m.group(3)
+            depth = 0
+            fixed = []
+            for part in _em_tok.split(content):
+                if part == '<EM>':
+                    depth += 1
+                    fixed.append(part)
+                elif part == '</EM>':
+                    if depth > 0:
+                        depth -= 1
+                        fixed.append(part)
+                    # else: orphan </EM> — drop it silently
+                else:
+                    fixed.append(part)
+            if depth > 0:  # unclosed EM before </TI>
+                fixed.append('</EM>' * depth)
+            new_content = ''.join(fixed)
+            if new_content == content:
+                return m.group(0)  # no change needed
+            return open_tag + new_content + close_tag
+
+        sgml = _ti_re.sub(_fix_ti, sgml)
+        return sgml.split('\n')
+
+    def _post_fix_merge_short_ti(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 33: Remove TI elements with < 3-char content (split multi-line heading artifact).
+
+        Three patterns from DOCX heading-line splits:
+        1. <BLOCKn><TI>X</TI>\\n</BLOCKn> empty block → drop block
+        2. <N>...</N><TI>X</TI> numbered block with connector word → drop TI only
+        3. Standalone ^<TI>X</TI>$ line (APPENDIX direct child) → drop line
+        """
+        import re as _re
+        sgml = '\n'.join(sgml_lines)
+        # Pattern 1: empty block whose only content is a short TI
+        sgml = _re.sub(r'<(BLOCK[1-5])><TI>[^<]{1,2}</TI>\n</\1>\n?', '', sgml)
+        # Pattern 2: numbered block with a short connector-word TI → keep N, drop TI
+        sgml = _re.sub(r'(<N>[^<]*</N>)<TI>[^<]{1,2}</TI>', r'\1', sgml)
+        # Pattern 3: standalone TI line that is a direct non-BLOCK child
+        sgml = _re.sub(r'^<TI>[^<]{1,2}</TI>$', '', sgml, flags=_re.MULTILINE)
+        return sgml.split('\n')
+
+    def _post_fix_remove_doubled_section_num(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 34: Remove doubled section numbers — 'Section(s) N N' → 'Section(s) N'."""
+        import re as _re
+        sgml = '\n'.join(sgml_lines)
+        sgml = _re.sub(r'\bSections? ([1-9]\d*) \1\b', lambda m: m.group(0).split()[0] + ' ' + m.group(1), sgml)
+        return sgml.split('\n')
+
+    def _post_fix_merge_adjacent_em(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 35: Merge directly adjacent EM tags — </EM><EM> → (content joined)."""
+        sgml = '\n'.join(sgml_lines)
+        sgml = sgml.replace('</EM><EM>', '')
+        return sgml.split('\n')
+
+    def _post_fix_self_hyphen(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 36: Restore dropped hyphens in self-X compounds."""
+        import re as _re
+        sgml = '\n'.join(sgml_lines)
+        sgml = _re.sub(r'\bself regulat', 'self-regulat', sgml, flags=_re.I)
+        sgml = _re.sub(r'\bself report', 'self-report', sgml, flags=_re.I)
+        sgml = _re.sub(r'\bself certif', 'self-certif', sgml, flags=_re.I)
+        return sgml.split('\n')
+
+    def _post_fix_ni_number_hyphen_space(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 37: Remove space after hyphen in NI/OSC document numbers.
+
+        ABBYY OCR sometimes inserts a space after the hyphen in references like
+        'NI 31-103' → 'NI 31- 103', '44-101F1' → '44- 101F1', '103CP' → '103CP'.
+        Pattern: \\b\\d{2,3}- \\d{2,3} (handles suffixes like CP, F1 without trailing \\b).
+        """
+        import re as _re
+        sgml = '\n'.join(sgml_lines)
+        sgml = _re.sub(r'\b(\d{2,3})- (\d{2,3})', r'\1-\2', sgml)
+        return sgml.split('\n')
+
+    def _post_fix_merge_part_title(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 42: Merge <TI>PART N</TI> with immediately following title TI.
+
+        Actual SGML from FIX 39/41 row-by-row extraction:
+          <BLOCKx><TI>PART 4</TI>
+          </BLOCKx>
+          <BLOCKx><TI>EXEMPTION FROM PROSPECTUS...</TI>
+        → <BLOCKx><TI>PART 4 EXEMPTION FROM PROSPECTUS...</TI>
+        (the empty shell block is absorbed; trailing </BLOCKx> stays)
+        """
+        import re as _re
+        sgml = '\n'.join(sgml_lines)
+        _avoid_next = _re.compile(
+            r'^(PART|CHAPTER|SCHEDULE|APPENDIX|ANNEX)\s+\d|^\d+\.\d+', _re.I
+        )
+
+        def _sub_part(m):
+            block_tag = m.group(1)
+            part_ref  = m.group(2).strip()
+            title     = m.group(3).strip()
+            if _avoid_next.match(title):
+                return m.group(0)  # don't merge two structural refs
+            print(f'   🔗 FIX42: {part_ref} + {title[:40]}')
+            return f'{block_tag}<TI>{part_ref} {title}</TI>'
+
+        # Match: <BLOCKn><TI>PART N</TI>\n</BLOCKn>\n<BLOCKn><TI>TITLE</TI>
+        _pat = _re.compile(
+            r'(<BLOCK\d+>)<TI>'
+            r'((?:PART|CHAPTER|SCHEDULE|APPENDIX|ANNEX)\s+\d+[A-Z]?)'
+            r'</TI>\n</BLOCK\d+>\n<BLOCK\d+><TI>([^<\n]+)</TI>',
+            _re.IGNORECASE
+        )
+        sgml = _pat.sub(_sub_part, sgml)
+
+        # Remove bare structural keyword TIs with no number (TOC header-row artifacts).
+        _bare_re = _re.compile(
+            r'<BLOCK\d+><TI>(PART|TITLE|CHAPTER|SCHEDULE|APPENDIX|ANNEX)</TI>\n</BLOCK\d+>\n',
+            _re.IGNORECASE
+        )
+        sgml = _bare_re.sub('', sgml)
+
+        return sgml.split('\n')
+
+    def _post_fix_merge_section_title(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 43: Merge <TI>X.Y</TI> section number with immediately following title TI.
+
+        Actual SGML from FIX 39/41 row-by-row extraction:
+          <BLOCKx><TI>4.1</TI>
+          </BLOCKx>
+          <BLOCKx><TI>Exemption from Prospectus...</TI>
+        → <BLOCKx><TI>4.1 Exemption from Prospectus...</TI>
+        """
+        import re as _re
+        sgml = '\n'.join(sgml_lines)
+        _avoid_next = _re.compile(
+            r'^(PART|CHAPTER|SCHEDULE|APPENDIX|ANNEX)\s+\d|^\d+\.\d+', _re.I
+        )
+
+        def _sub_sec(m):
+            block_tag = m.group(1)
+            secnum    = m.group(2)
+            title     = m.group(3).strip()
+            if len(title) <= 5 or _avoid_next.match(title):
+                return m.group(0)
+            print(f'   🔗 FIX43: {secnum} + {title[:40]}')
+            return f'{block_tag}<TI>{secnum} {title}</TI>'
+
+        # Match: <BLOCKn><TI>N.N</TI>\n</BLOCKn>\n<BLOCKn><TI>TITLE</TI>
+        _pat = _re.compile(
+            r'(<BLOCK\d+>)<TI>(\d+\.\d+[A-Z]?)</TI>\n</BLOCK\d+>\n<BLOCK\d+><TI>([^<\n]+)</TI>'
+        )
+        sgml = _pat.sub(_sub_sec, sgml)
+        return sgml.split('\n')
+
+    def _post_fix_dedup_part_headings(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 44: Remove empty duplicate PART/CHAPTER/SCHEDULE headings.
+
+        When both a TOC table and content table are converted to layout paragraphs
+        (FIX 39), the same PART heading appears in both. The TOC-derived occurrence
+        is empty (<BLOCK2><TI>PART N TITLE</TI></BLOCK2> with no content). The
+        content-derived occurrence has a non-empty body. Remove the EMPTY ones when
+        the same TI text also appears in a non-empty block elsewhere in the document.
+        """
+        import re as _re
+        sgml = '\n'.join(sgml_lines)
+        # Find all structural TI headings in the document
+        _all_ti = _re.compile(
+            r'<TI>((PART|CHAPTER|SCHEDULE|APPENDIX|ANNEX)[^<\n]+)</TI>',
+            _re.IGNORECASE
+        )
+        # Count occurrences of each heading
+        ti_counts: dict = {}
+        for m in _all_ti.finditer(sgml):
+            k = m.group(1).upper().strip()
+            ti_counts[k] = ti_counts.get(k, 0) + 1
+        # Remove empty block occurrences for headings that appear more than once
+        _empty_block = _re.compile(
+            r'<BLOCK(\d+)><TI>((PART|CHAPTER|SCHEDULE|APPENDIX|ANNEX)[^<\n]+)</TI>\n</BLOCK\1>\n',
+            _re.IGNORECASE
+        )
+        def _maybe_remove(m):
+            ti_text = m.group(2).upper().strip()
+            if ti_counts.get(ti_text, 0) > 1:
+                print(f'   🔗 FIX44: removed empty dup <TI>{m.group(2)[:50]}</TI>')
+                return ''
+            return m.group(0)
+        sgml = _empty_block.sub(_maybe_remove, sgml)
+        return sgml.split('\n')
+
+    def _post_fix_remove_letterhead_fragments(self, sgml_lines: List[str]) -> List[str]:
+        """FIX 45: Remove consecutive all-caps empty BLOCK2 heading fragments (letterhead).
+
+        Bilingual institutional headers like:
+          <BLOCK2><TI>FINANCIAL AND</TI></BLOCK2>
+          <BLOCK2><TI>CONSUMER SERVICES COMMISSION OF</TI></BLOCK2>
+          <BLOCK2><TI>NEW BRUNSWICK</TI></BLOCK2>
+        are agency letterhead, not section headings. These appear as 2+ consecutive
+        empty BLOCK2 TIs with all-caps text (no digits, no PART/CHAPTER keywords).
+        To avoid false positives, only remove them if they contain conjunctions/prepositions
+        (AND, OF, DES, DU, ET, AU, AUX) suggesting they are parts of an institutional name.
+        """
+        import re as _re
+        sgml = '\n'.join(sgml_lines)
+        # Match 2+ consecutive empty BLOCK2 TIs that are all-caps (letters, spaces, accented chars)
+        # but NOT structural headings (PART, CHAPTER, SCHEDULE, COMPANION, etc.)
+        _frag_pat = _re.compile(
+            r'(?:<BLOCK\d+><TI>([A-Z\u00C0-\u00FF][A-Z \u00C0-\u00FF&/]*)</TI>\n</BLOCK\d+>\n){2,}'
+        )
+        _structural = _re.compile(
+            r'^(PART|CHAPTER|SCHEDULE|APPENDIX|ANNEX|COMPANION|NATIONAL|MULTILATERAL|PROVINCIAL)\b',
+            _re.IGNORECASE
+        )
+        _conjunction = _re.compile(r'\b(AND|OF|DES|DU|ET|AU|AUX|DE|LA|LE|LES|THE|FOR)\b', _re.IGNORECASE)
+        def _remove_letterhead(m):
+            full = m.group(0)
+            # Extract all TI texts in the match
+            tis = _re.findall(r'<TI>([^<]+)</TI>', full)
+            # Only remove if none are structural AND at least one has a conjunction
+            if any(_structural.match(ti) for ti in tis):
+                return full
+            if not any(_conjunction.search(ti) for ti in tis):
+                return full
+            print(f'   🔗 FIX45: removed letterhead: {"|".join(tis[:3])}')
+            return ''
+        sgml = _frag_pat.sub(_remove_letterhead, sgml)
+        return sgml.split('\n')
 
     def _post_fix_rename_block5(self, sgml_lines: List[str]) -> List[str]:
         """FIX 23: Rename BLOCK5 → BLOCK4 when vendor uses 0 BLOCK5.
@@ -9069,8 +10309,13 @@ class SGMLGenerator:
             # Full match is the letter P1 + all following roman P1s
             letter_p1_open = m.group(1)  # <P1>(c) text:
             roman_items = m.group(2)     # <P1>(i)...</P1>\n<P1>(ii)...</P1>...
-            # Convert roman P1 to P2 (only i/v/x-starting romans, not alpha like (c))
-            roman_as_p2 = _re_sub.sub(r'<P1>(\([ivx][ivxlcdm]*\))', r'<P2>\1', roman_items, flags=_re_sub.IGNORECASE)
+            # Convert roman P1 to P2 (only i/v/x-starting romans, not alpha like (c)).
+            # Parens are OPTIONAL here to match the outer pattern below -- a
+            # period-terminated roman ("i. text") has no parens at all, and if this
+            # regex required them, the <P1> open tag would silently stay unconverted
+            # while the unconditional </P1> -> </P2> close-tag substitution below still
+            # fires, producing a mismatched <P1>...</P2> (confirmed real bug, By-Law-No-1).
+            roman_as_p2 = _re_sub.sub(r'<P1>(\(?[ivx][ivxlcdm]*\)?)', r'<P2>\1', roman_items, flags=_re_sub.IGNORECASE)
             roman_as_p2 = _re_sub.sub(r'(</P1>)', r'</P2>', roman_as_p2)
             return letter_p1_open + '\n' + roman_as_p2.strip() + '\n</P1>'
 
@@ -9091,7 +10336,8 @@ class SGMLGenerator:
             def _fix_pattern_b2(m):
                 letter_p1_open = m.group(1)   # <P1>(F) text  (no closing </P1>)
                 roman_items    = m.group(2)    # \n<P1>(ii)...</P1>\n<P1>(iii)...</P1>...
-                roman_as_p2 = _re_sub.sub(r'<P1>(\([ivx][ivxlcdm]*\))', r'<P2>\1', roman_items)
+                # Parens optional -- see Pattern B's comment for why this matters.
+                roman_as_p2 = _re_sub.sub(r'<P1>(\(?[ivx][ivxlcdm]*\)?)', r'<P2>\1', roman_items)
                 roman_as_p2 = _re_sub.sub(r'</P1>', r'</P2>', roman_as_p2)
                 return letter_p1_open + '\n' + roman_as_p2.strip() + '\n</P1>'
             _pat_b2 = (r'(<P1>\([A-Z]\)[^\n<]*?)</P1>'
@@ -9123,7 +10369,8 @@ class SGMLGenerator:
             def _fix_pattern_b3(m):
                 letter_p1_open = m.group(1)   # <P1>(f) text  (no closing </P1>)
                 roman_items    = m.group(2)    # \n<P1>(i)...</P1>...\n<P1>(iii)...</P1>
-                roman_as_p2 = _re_sub.sub(r'<P1>(\([ivx][ivxlcdm]*\))', r'<P2>\1', roman_items)
+                # Parens optional -- see Pattern B's comment for why this matters.
+                roman_as_p2 = _re_sub.sub(r'<P1>(\(?[ivx][ivxlcdm]*\)?)', r'<P2>\1', roman_items)
                 roman_as_p2 = _re_sub.sub(r'</P1>', r'</P2>', roman_as_p2)
                 return letter_p1_open + '\n' + roman_as_p2.strip() + '\n</P1>'
             # Note: roman must start with i/v/x (not c/d/l/m which are ambiguous with letters)
@@ -9411,8 +10658,8 @@ class SGMLGenerator:
                 if level == 2:
                     _b2_opened += 1
                 open_sections.append((level, tag))
-                result.append(f'<{tag}>')
-                result.append(inner)      # <TI>...</TI> or <N>..</N><TI>...</TI>
+                # Emit BLOCK opener inline with its TI/N content (vendor format: <BLOCK2><TI>...</TI>)
+                result.append(f'<{tag}>{inner}')
             else:
                 result.append(line)
 
@@ -9613,8 +10860,8 @@ class SGMLGenerator:
 
     def _apply_inline_formatting(self, para: 'ParagraphData') -> str:
         """Apply inline BOLD/EM tags with entity-safe segmentation.
-        Handles co-located BOLD+EM spans (bold+italic DOCX runs) by emitting
-        <EM><BOLD>text</BOLD></EM> per vendor convention."""
+        FIX Issue 2: merges adjacent/touching BOLD spans into one outer <BOLD>
+        and nests EM spans inside, eliminating redundant <BOLD>x</BOLD><BOLD>y</BOLD>."""
         inline = para.inline_formatting
         if not inline:
             return self.convert_entities(para.text)
@@ -9623,13 +10870,13 @@ class SGMLGenerator:
         if not inline:
             return self.convert_entities(para.text)
 
-        # Merge co-located BOLD+EM entries (same start+end) into a single EM_BOLD span
-        # Vendor convention: <BOLD><EM>text</EM></BOLD> (BOLD is outer wrapper)
         from collections import defaultdict as _dd
         _span_tags = _dd(set)
         for f in inline:
             _span_tags[(f.get('start', 0), f.get('end', len(para.text)))].add(f.get('tag', ''))
-        _merged = []
+
+        raw_bold = []
+        raw_em   = []
         _seen = set()
         for f in inline:
             key = (f.get('start', 0), f.get('end', len(para.text)))
@@ -9637,42 +10884,84 @@ class SGMLGenerator:
                 continue
             _seen.add(key)
             tags = _span_tags[key]
-            if 'BOLD' in tags and 'EM' in tags:
-                _merged.append({'start': key[0], 'end': key[1], 'tag': 'EM_BOLD'})
+            if 'BOLD' in tags:
+                raw_bold.append({'start': key[0], 'end': key[1]})
+            if 'EM' in tags:
+                raw_em.append({'start': key[0], 'end': key[1]})
+
+        # Merge adjacent/touching BOLD spans
+        bold_sorted = sorted(raw_bold, key=lambda x: x['start'])
+        merged_bold = []
+        for sp in bold_sorted:
+            s, e = sp['start'], sp['end']
+            if merged_bold and s <= merged_bold[-1][1]:
+                merged_bold[-1] = (merged_bold[-1][0], max(merged_bold[-1][1], e))
             else:
-                _merged.append({'start': key[0], 'end': key[1], 'tag': next(iter(tags))})
-        inline = sorted(_merged, key=lambda x: x.get('start', 0))
+                merged_bold.append((s, e))
 
-        segments = []
-        pos = 0
+        if not merged_bold:
+            em_sorted = sorted(raw_em, key=lambda x: x['start'])
+            result = []
+            pos = 0
+            for sp in em_sorted:
+                s, e = sp['start'], sp['end']
+                if s < pos:
+                    continue  # Skip: already covered by a prior EM span (dedup guard)
+                if s > pos:
+                    result.append(self.convert_entities(para.text[pos:s]))
+                result.append(f"<EM>{self.convert_entities(para.text[s:e])}</EM>")
+                pos = e
+            if pos < len(para.text):
+                result.append(self.convert_entities(para.text[pos:]))
+            return ''.join(result)
 
-        for fmt in inline:
-            start = max(fmt.get('start', 0), pos)
-            end   = fmt.get('end', len(para.text))
-            tag   = fmt.get('tag', '')
-
-            if start >= end:
-                continue
-
-            if start > pos:
-                segments.append({'type': 'text', 'content': self.convert_entities(para.text[pos:start])})
-
-            formatted_text = para.text[start:end]
-            segments.append({'type': 'tag', 'tag': tag, 'content': self.convert_entities(formatted_text)})
-            pos = end
-
-        if pos < len(para.text):
-            segments.append({'type': 'text', 'content': self.convert_entities(para.text[pos:])})
-
+        em_sorted = sorted(raw_em, key=lambda x: x['start'])
         result = []
-        for seg in segments:
-            if seg['type'] == 'text':
-                result.append(seg['content'])
-            elif seg['tag'] == 'EM_BOLD':
-                result.append(f"<BOLD><EM>{seg['content']}</EM></BOLD>")
-            else:
-                result.append(f"<{seg['tag']}>{seg['content']}</{seg['tag']}>")
-
+        pos = 0
+        for (b_start, b_end) in merged_bold:
+            if b_start > pos:
+                for em in em_sorted:
+                    es, ee = em['start'], em['end']
+                    if ee <= pos:
+                        continue
+                    if es >= b_start:
+                        break
+                    es2 = max(es, pos)
+                    ee2 = min(ee, b_start)
+                    if pos < es2:
+                        result.append(self.convert_entities(para.text[pos:es2]))
+                    result.append(f"<EM>{self.convert_entities(para.text[es2:ee2])}</EM>")
+                    pos = ee2
+                if pos < b_start:
+                    result.append(self.convert_entities(para.text[pos:b_start]))
+            bold_inner = []
+            inner_pos = b_start
+            for em in em_sorted:
+                es, ee = em['start'], em['end']
+                if ee <= b_start or es >= b_end:
+                    continue
+                es = max(es, b_start)
+                ee = min(ee, b_end)
+                if es > inner_pos:
+                    bold_inner.append(self.convert_entities(para.text[inner_pos:es]))
+                bold_inner.append(f"<EM>{self.convert_entities(para.text[es:ee])}</EM>")
+                inner_pos = ee
+            if inner_pos < b_end:
+                bold_inner.append(self.convert_entities(para.text[inner_pos:b_end]))
+            result.append(f"<BOLD>{''.join(bold_inner)}</BOLD>")
+            pos = b_end
+        if pos < len(para.text):
+            for em in em_sorted:
+                es, ee = em['start'], em['end']
+                if ee <= pos:
+                    continue
+                es2 = max(es, pos)
+                if pos < es2:
+                    result.append(self.convert_entities(para.text[pos:es2]))
+                result.append(f"<EM>{self.convert_entities(para.text[es2:ee])}</EM>")
+                pos = ee
+            if pos < len(para.text):
+                result.append(self.convert_entities(para.text[pos:]))
         return ''.join(result)
 
     # ─── TABLE GENERATION ──────────────────────────────────────────────────────
@@ -9691,6 +10980,21 @@ class SGMLGenerator:
             # Apply DOCX-run italic/bold spans directly to the cell text
             # Collect all formatting spans, sort by start
             spans = sorted(italic_spans, key=lambda s: s['start'])
+            # Strip isolated short italic word at paragraph boundary (DOCX authoring artifact).
+            # Covers both cell-start (s==0) and mid-cell paragraph starts (preceded by \n).
+            _clean = []
+            for _sp in spans:
+                _s = _sp.get('start', 0)
+                _e = _sp.get('end', _s)
+                _seg = text[_s:_e]
+                _at_para_start = _s == 0 or text[_s - 1] == '\n'
+                _after_space = _e >= len(text) or text[_e] in (' ', '\n')
+                if (_sp.get('italic') and not _sp.get('bold') and
+                        _at_para_start and _after_space and
+                        len(_seg) <= 4 and _seg.isalpha()):
+                    continue
+                _clean.append(_sp)
+            spans = _clean
             result = []
             pos = 0
             for sp in spans:
@@ -9714,7 +11018,11 @@ class SGMLGenerator:
                 pos = e
             if pos < len(text):
                 result.append(self.convert_entities(text[pos:]))
-            return ''.join(result)
+            # FIX Issue 2 (table cells): merge adjacent BOLD spans produced by
+            # per-run rendering (same root cause as paragraph BOLD merging fix)
+            _cell_out = ''.join(result)
+            _cell_out = re.sub(r'</BOLD>(\s*)<BOLD>', r'\1', _cell_out)
+            return _cell_out
         else:
             # No run-level data: fall back to pattern-based EM detection
             return self._apply_em_patterns_to_cell_text(text)
@@ -9951,6 +11259,18 @@ class SGMLGenerator:
         while i < n:
             char = chars[i]
             if char == '\u201c' or char == '\u201d':  # double curly quotes
+                # NOTE (2026-08-24): attempted a character-identity-based fix here
+                # (trust \u201c=open/\u201d=close instead of a position toggle) after
+                # finding it resolved several reversed-quote instances in 25-0017.
+                # REVERTED: golden-suite regression test on 11-349 (a business-
+                # verified reference doc) proved the source DOCX's own \u201c/\u201d
+                # assignment is NOT always semantically reliable either -- for that
+                # document's specific passage, the character-based approach scored
+                # 0/6 correct against vendor's own SGML, while this original toggle
+                # scored 5/6 correct. Neither approach is universally correct; this
+                # toggle remains the better default until a more robust fix (e.g.
+                # detecting per-paragraph whether the source's own quote chars are
+                # internally consistent before trusting them) is designed.
                 if double_quote_open:
                     result.append('&ldquo;')
                     double_quote_open = False
@@ -10160,9 +11480,9 @@ class DeterministicSGMLFixer:
         sgml = self._fix_polident_order(sgml)
         sgml = self._fix_polidoc_attrs(sgml, jurisdiction)
         sgml = self._apply_em_patterns(sgml)
-        sgml = self._fix_premature_block_close(sgml)
         sgml = self._fix_block_nesting(sgml)
-        sgml = self._fix_unclosed_blocks(sgml)
+        sgml = self._fix_double_ldquo(sgml)
+        sgml = self._fix_ti_hyphen_to_mdash(sgml)
         delta = len(sgml) - original_len
         print(f"   [DeterministicFixer] {len(self._changes)} fixes | \u0394length={delta:+d}")
         for ch in self._changes[:25]:
@@ -10347,177 +11667,33 @@ class DeterministicSGMLFixer:
             self._changes.append("Guaranteed EM tagging for NI/MI numbers and email addresses (D2)")
         return ''.join(parts)
 
-    def _fix_premature_block_close(self, sgml: str) -> str:
-        """FIX-BLOCK-EARLY-CLOSE: Reopen BLOCK tags that close too early (only TI inside).
-
-        Pattern: <BLOCKn>...<TI>text</TI></BLOCKn> immediately followed by <P>/<ITEM> content.
-        Vendor expects the BLOCK to wrap all following paragraph content, not just the TI.
-        Repair: remove the premature </BLOCKn> and re-insert it at the next block boundary.
-        """
-        if 'BLOCK' not in sgml:
-            return sgml
-
-        CONTENT_RE  = re.compile(r'^<(?:P|P1|P2|P3|P4|ITEM|LINE|QUOTE|FOOTNOTE)\b')
-        BLOCK_OPEN  = re.compile(r'^<BLOCK(\d+)(?:\s[^>]*)?>$')
-        BLOCK_CLOSE = re.compile(r'^</BLOCK(\d+)>$')
-        SECTION_END = re.compile(r'^</(?:FREEFORM|POLIDOC|APPENDIX|SCHEDULE)>')
-        # Line ending with </TI></BLOCKn> — single-line or tail of multi-line TI
-        EARLY_CLOSE = re.compile(r'^(.*</TI>)</BLOCK(\d+)>\s*$')
-
-        lines  = sgml.split('\n')
-        result = []
-        i = 0
-        changed = False
-
-        while i < len(lines):
-            stripped = lines[i].strip()
-
-            # Detect: line ends with </TI></BLOCKn>
-            m = EARLY_CLOSE.match(stripped)
-            if m:
-                block_level = int(m.group(2))
-                # Look ahead for first non-empty line
-                j = i + 1
-                while j < len(lines) and not lines[j].strip():
-                    j += 1
-                # Only reopen when next content is P/ITEM (not another BLOCK or section boundary)
-                if j < len(lines) and CONTENT_RE.match(lines[j].strip()):
-                    # Emit the line without the premature close
-                    result.append(lines[i].rstrip().replace(f'</BLOCK{block_level}>', ''))
-                    i += 1
-                    # Collect subsequent lines until block boundary
-                inserted_close = False
-                while i < len(lines):
-                    curr = lines[i].strip()
-                    mb_open  = BLOCK_OPEN.match(curr)
-                    mb_close = BLOCK_CLOSE.match(curr)
-                    if SECTION_END.match(curr):
-                        result.append(f'</BLOCK{block_level}>')
-                        result.append(lines[i])
-                        i += 1
-                        inserted_close = True
-                        changed = True
-                        break
-                    elif mb_open and int(mb_open.group(1)) <= block_level:
-                        result.append(f'</BLOCK{block_level}>')
-                        result.append(lines[i])
-                        i += 1
-                        inserted_close = True
-                        changed = True
-                        break
-                    elif mb_close and int(mb_close.group(1)) <= block_level:
-                        result.append(lines[i])  # keep the original close
-                        i += 1
-                        inserted_close = True
-                        changed = True
-                        break
-                    else:
-                        result.append(lines[i])
-                        i += 1
-                if not inserted_close:
-                    result.append(f'</BLOCK{block_level}>')
-                    changed = True
-
-            result.append(lines[i])
-            i += 1
-
-        if changed:
-            self._changes.append('FIX-BLOCK-EARLY-CLOSE: reopened BLOCK(s) that closed too early after <TI>')
-        return '\n'.join(result)
-
-    def _fix_unclosed_blocks(self, sgml: str) -> str:
-        """Close any BLOCK tags left open before </FREEFORM> or </POLIDOC>.
-
-        After _fix_block_nesting demotes level-skipping tags, the demoted open tag
-        exists but its corresponding close may be missing (the original close was
-        already absent from the pipeline output for single-section documents like
-        33-930N).  This pass walks each FREEFORM section line-by-line, tracks the
-        BLOCK open/close stack, and injects any missing </BLOCKn> tags immediately
-        before the </FREEFORM> or </POLIDOC> line that would close the section.
-
-        Safe: only injects tags when the stack is non-empty at a section boundary.
-        Does not affect documents whose BLOCK tags are already balanced.
-        """
-        if 'BLOCK' not in sgml:
-            return sgml
-        _BOPEN  = re.compile(r'^<BLOCK(\d+)(?:\s[^>]*)?>$')
-        _BCLOSE = re.compile(r'^</BLOCK(\d+)>$')
-        lines  = sgml.split('\n')
-        result = []
-        stack: list = []  # levels of currently open BLOCK tags
-        changed = False
-        for line in lines:
-            s = line.strip()
-            # At a section boundary: flush any open BLOCK tags first
-            if s in ('</FREEFORM>', '</POLIDOC>'):
-                while stack:
-                    level = stack.pop()
-                    result.append(f'</BLOCK{level}>')
-                    self._changes.append(
-                        f'Injected missing </BLOCK{level}> before {s} (unclosed-block repair)'
-                    )
-                    changed = True
-            # Reset stack at section open (new FREEFORM context)
-            if s == '<FREEFORM>':
-                stack.clear()
-            # Track BLOCK opens (container format: <BLOCKn> alone on a line)
-            m_open = _BOPEN.match(s)
-            if m_open:
-                stack.append(int(m_open.group(1)))
-            # Track BLOCK closes
-            m_close = _BCLOSE.match(s)
-            if m_close:
-                level = int(m_close.group(1))
-                if stack and stack[-1] == level:
-                    stack.pop()
-            result.append(line)
-        return '\n'.join(result)
-
     def _fix_block_nesting(self, sgml: str) -> str:
-        """Repair BLOCK level skips by demoting the skipping tag to current+1.
-
-        FIX (June 2026): The previous approach inserted ancestor wrapper tags
-        (e.g. <BLOCK1><BLOCK2> before a <BLOCK3>) without newlines, causing
-        "<BLOCK1><BLOCK2><BLOCK3>" to appear concatenated on one line, and left
-        those ancestors unclosed on the next heading. We now DEMOTE the high-level
-        block to current+1 instead, producing clean single-level headings.
-
-        FIX2 (June 2026): Replaced flat level_remap dict with parallel stacks
-        (actual_stack / orig_stack) to correctly handle sibling blocks at the same
-        original level, and adopted "clear all >= level" close-tag semantics
-        (matching the validator) so that a stray </BLOCK1> after an unclosed BLOCK2
-        properly resets the stack and exposes the subsequent BLOCK3 as a level-skip.
-        Orphaned close tags (no matching open in stack) are removed.
-        """
         if 'BLOCK' not in sgml:
             return sgml
         block_re = re.compile(r'<(/?)BLOCK(\d+)(\s[^>]*)?>', re.IGNORECASE)
         events = [(m.start(), m.group(1) == '/', int(m.group(2))) for m in block_re.finditer(sgml)]
         if not events:
             return sgml
-
-        # --- Detection pass (uses same "clear >= level" close semantics as validator) ---
         stack: list = []
         has_skip = False
         for _, closing, level in events:
             if closing:
-                if level in stack:
-                    stack = [l for l in stack if l < level]
+                if stack and stack[-1] == level:
+                    stack.pop()
             else:
                 current = stack[-1] if stack else 0
-                if level > current + 1 and level >= 2:
+                # Only flag a skip when already inside a block (current > 0).
+                # Transitioning from level-0 (e.g. start of FREEFORM) to BLOCK2/3
+                # is valid — do NOT insert a spurious BLOCK1 wrapper.
+                if level > current + 1 and current > 0:
                     has_skip = True
                     break
                 stack.append(level)
         if not has_skip:
             return sgml
-
-        # --- Repair pass with parallel stacks ---
-        # actual_stack[i] = the actual (possibly demoted) level of the i-th open block
-        # orig_stack[i]   = the original level as written in the SGML
         parts = re.split(r'(</?BLOCK\d+(?:\s[^>]*)?>)', sgml, flags=re.IGNORECASE)
-        actual_stack: list = []
-        orig_stack: list = []
+        stack = []
+        auto_opened: list = []
         result = []
         for part in parts:
             m = re.match(r'<(/?)BLOCK(\d+)(\s[^>]*)?>', part, re.IGNORECASE)
@@ -10526,47 +11702,104 @@ class DeterministicSGMLFixer:
                 continue
             closing = m.group(1) == '/'
             level = int(m.group(2))
-            attrs = m.group(3) or ''
             if closing:
-                if level in orig_stack:
-                    # Find the topmost entry with this original level
-                    idx = len(orig_stack) - 1 - orig_stack[::-1].index(level)
-                    actual = actual_stack[idx]
-                    # Emit close tags for any blocks nested above idx (they were
-                    # implicitly closed — emit their close tags to keep balance)
-                    for i in range(len(actual_stack) - 1, idx, -1):
-                        inner_actual = actual_stack[i]
-                        result.append(f'</BLOCK{inner_actual}>')
-                        self._changes.append(
-                            f"Inserted missing </BLOCK{inner_actual}> before </BLOCK{actual}>"
-                        )
-                    # Pop everything from idx onwards ("clear >= this level" semantics)
-                    actual_stack = actual_stack[:idx]
-                    orig_stack = orig_stack[:idx]
-                    if actual != level:
-                        part = f'</BLOCK{actual}>'
-                    result.append(part)
-                else:
-                    # Orphaned close tag — no matching open; remove it
-                    self._changes.append(
-                        f"Removed orphaned </BLOCK{level}> (no matching open)"
-                    )
-                    # Do NOT append — effectively delete the tag
+                while auto_opened and auto_opened[-1] > level:
+                    auto_lev = auto_opened.pop()
+                    result.append(f'\n</BLOCK{auto_lev}>')
+                    self._changes.append(f"Auto-closed BLOCK{auto_lev} (paired with inserted wrapper)")
+                if stack and stack[-1] == level:
+                    stack.pop()
+                if auto_opened and auto_opened[-1] == level:
+                    auto_opened.pop()
+                result.append(part)
             else:
-                current = actual_stack[-1] if actual_stack else 0
-                if level > current + 1:
-                    # Demote to current+1 — do NOT insert ancestor wrappers.
-                    actual = current + 1
-                    part = f'<BLOCK{actual}{attrs}>'
-                    self._changes.append(
-                        f"Demoted BLOCK{level} \u2192 BLOCK{actual} (level-skip repair)"
-                    )
-                else:
-                    actual = level
-                actual_stack.append(actual)
-                orig_stack.append(level)
+                current = stack[-1] if stack else 0
+                # Only fill gaps when already inside a block — same rationale as detection.
+                if level > current + 1 and current > 0:
+                    for mid in range(current + 1, level):
+                        result.append(f'\n<BLOCK{mid}>\n')
+                        auto_opened.append(mid)
+                        self._changes.append(
+                            f"Inserted <BLOCK{mid}> (level skip: BLOCK{current} \u2192 BLOCK{level}, L2 B)"
+                        )
+                stack.append(level)
                 result.append(part)
         return ''.join(result)
+
+    def _fix_double_ldquo(self, sgml: str) -> str:
+        """Fix quote toggle bug: &ldquo;text&ldquo; → &ldquo;text&rdquo;.
+        Occurs when open and close quotes are in separate runs and convert_entities
+        resets the toggle state per run, causing both to emit &ldquo;.
+        Strategy: walk &ldquo;/&rdquo; markers in document order, tracking whether
+        the last one seen is still "open"; a second &ldquo; before any &rdquo; is
+        the buggy closing quote and gets rewritten to &rdquo;.
+
+        NOTE: previously implemented as a single regex with a nested (?:...)*?
+        alternation spanning arbitrary tag/entity/text content between the two
+        markers — on large documents (100K+ chars) with many entities this
+        triggered catastrophic backtracking (observed: 25+ min hang on a
+        235K-char real document). This linear single-pass tokenizer scan is
+        semantics-preserving (verified against the old regex on multi-quote
+        cases) and runs in O(n).
+        """
+        if '&ldquo;' not in sgml:
+            return sgml
+        marker_re = re.compile(r'&ldquo;|&rdquo;')
+        out = []
+        last_end = 0
+        open_pending = False
+        count = 0
+        for m in marker_re.finditer(sgml):
+            out.append(sgml[last_end:m.start()])
+            if m.group() == '&ldquo;' and open_pending:
+                out.append('&rdquo;')
+                count += 1
+                open_pending = False
+            else:
+                out.append(m.group())
+                open_pending = (m.group() == '&ldquo;')
+            last_end = m.end()
+        out.append(sgml[last_end:])
+        if count:
+            sgml = ''.join(out)
+            self._changes.append(f"Fixed {count} double-ldquo closing quote(s)")
+        return sgml
+
+    def _fix_ti_hyphen_to_mdash(self, sgml: str) -> str:
+        """FIX 52 (2026-08-24): a literal ASCII hyphen used as a title/subtitle
+        separator in a heading (e.g. "PART 5 - Questions", "CSA Collaboratory
+        Theme - Data Portability", "Section 1 - Definitions") is left as a plain
+        "-" by the existing entity map, which only converts actual Unicode dash
+        characters (em-dash/en-dash/figure-dash) to &mdash; -- confirmed via
+        G-check WRONG HEADING TEXT sampling across 8+ documents (44-306, 11-406,
+        11-502, 2025-003, 2025-008, A26-001, 41-307, 25-313) that vendor ALWAYS
+        uses &mdash; (no surrounding spaces) for this exact separator role,
+        regardless of what dash-like character the source literally used.
+        Confirmed via 44-306 specifically: PART 1-3 (literal ASCII "-" in source)
+        render as "PART 1 - Introduction" while PART 4-5 (numPr-auto-generated,
+        using a real Unicode dash internally) correctly render as "PART
+        4&mdash;Pilot Program" -- same document, same heading family, only
+        the SOURCE character differs. Scoped to <TI> tag content only (never
+        touches <P> body text) because a bare hyphen in body prose is usually a
+        genuine compound-word hyphen (e.g. "self-regulatory"), not a separator --
+        the space-hyphen-space pattern is the reliable signal that distinguishes
+        a title separator (always spaced in standard typography) from a
+        compound-word hyphen (never spaced).
+        """
+        if ' - ' not in sgml:
+            return sgml
+        count = 0
+        def _repl(m):
+            nonlocal count
+            inner = m.group(1)
+            new_inner = re.sub(r' - ', '&mdash;', inner)
+            if new_inner != inner:
+                count += new_inner.count('&mdash;') - inner.count('&mdash;')
+            return f'<TI>{new_inner}</TI>'
+        sgml = re.sub(r'<TI>(.*?)</TI>', _repl, sgml)
+        if count:
+            self._changes.append(f"Normalized {count} heading hyphen separator(s) to &mdash; (L2 D)")
+        return sgml
 
 
 # ── Singleton instance ────────────────────────────────────────────────────────
@@ -10610,14 +11843,15 @@ class CompletePipeline:
 
         # ABBYY
         try:
-            self.abbyy = FRS14Converter(
-                server_url=FRS14_CONFIG['server_url'],
-                timeout=FRS14_CONFIG['timeout'],
+            self.abbyy = ABBYYConverter(
+                ABBYY_CONFIG['customer_id'],
+                ABBYY_CONFIG['license_path'],
+                ABBYY_CONFIG['license_password']
             )
             self.abbyy.initialize()
-            print("✅ FRS14 bridge ready")
+            print("✅ ABBYY ready")
         except Exception as e:
-            print(f"⚠️  FRS14 bridge unavailable: {e}")
+            print(f"⚠️  ABBYY failed: {e}")
             self.abbyy = None
 
         # RAG
@@ -10762,19 +11996,11 @@ class CompletePipeline:
         _existing_urls = set(_STD_URL_RE.findall(result))
 
         def _url_present_it(_url, _existing):
-            # Normalize to www. form for comparison (handles http://www.x vs www.x mismatch)
-            def _norm_url(u):
-                return _re_it.sub(r'^https?://', '', u.rstrip('/'))
-            _url_norm = _norm_url(_url)
             _pfx = _url[:min(50, len(_url))]
-            _pfx_norm = _url_norm[:min(50, len(_url_norm))]
-            for _eu in _existing:
-                _eu_norm = _norm_url(_eu)
-                if (_eu.startswith(_pfx) or _pfx.startswith(_eu[:min(50, len(_eu))])
-                        or _eu_norm.startswith(_pfx_norm)
-                        or _pfx_norm.startswith(_eu_norm[:min(50, len(_eu_norm))])):
-                    return True
-            return False
+            return any(
+                _eu.startswith(_pfx) or _pfx.startswith(_eu[:min(50, len(_eu))])
+                for _eu in _existing
+            )
 
         # ── 3a. Gather (anchor_text, url) from DOCX paragraphs via instrText ──
         _para_url_pairs = []
@@ -10813,17 +12039,7 @@ class CompletePipeline:
         )
 
         def _inject_near(_res, _search, _url_inj):
-            """Find _search (case-insensitive) in _res; inject url before nearest block close.
-            Skip injection when the anchor text IS already a URL (www./http://) — the
-            URL is already visible to the reader; adding <EM>[url]</EM> duplicates it.
-            """
-            # Suppress injection when anchor text is itself a URL (already visible)
-            _search_stripped = _re_it.sub(r'^https?://(www\.)?', 'www.', _search.strip(), flags=_re_it.I)
-            _url_stripped = _re_it.sub(r'^https?://(www\.)?', 'www.', _url_inj.strip().rstrip('/'), flags=_re_it.I)
-            if (_search.lower().startswith(('www.', 'http://', 'https://'))
-                    or _search_stripped.lower().startswith(_url_stripped[:20].lower())
-                    or _url_stripped.lower().startswith(_search_stripped[:20].lower())):
-                return _res, False
+            """Find _search (case-insensitive) in _res; inject url before nearest block close."""
             _p = _res.lower().find(_search.lower())
             if _p < 0:
                 return _res, False
@@ -10976,13 +12192,6 @@ class CompletePipeline:
         result = sgml_content
 
         for uri, (anchor, page_ctx) in uri_info.items():
-            # Skip injection when the anchor text IS a URL (www./http://) — the
-            # link destination is already visible to the reader. Adding <EM>[url]</EM>
-            # would produce "www.lautorite.qc.ca <EM>[http://www.lautorite.qc.ca/]</EM>"
-            # which the vendor does not reproduce.
-            if anchor.lower().startswith(('www.', 'http://', 'https://')):
-                print(f"   Skipped URL-anchor injection (anchor is URL): '{anchor[:50]}'")
-                continue
             # For tracking URLs use exact match; otherwise use 60-char prefix
             _is_tracking = any(d in uri for d in _TRACKING_DOMAINS)
             if _is_tracking:
@@ -11048,6 +12257,11 @@ class CompletePipeline:
         pdf_name = Path(pdf_path).stem
         docx_path = os.path.join(PATHS['output_dir'], f"{pdf_name}.docx")
         sgml_path = os.path.join(PATHS['output_dir'], f"{pdf_name}.sgm")
+        # FIX (2026-08-22): exclude this doc's own vendor SGM from RAG's example
+        # retrieval — without this, converting doc X could retrieve X's own human-keyed
+        # vendor transcript as a "similar example" (confirmed empirically for
+        # Blanket-Order-135.docx retrieving Blanket-Order-135.sgm during its own conversion).
+        _vendor_exclude_source = f"{pdf_name}.sgm"
 
         print("\n" + "="*80)
         print(f"📔 CONVERTING: {pdf_name} (v7.0)")
@@ -11141,7 +12355,7 @@ class CompletePipeline:
         if self.llm_layer and ambiguous:
             print('\n5️⃣ Agentic LLM processing (StructuralAgent ∥ EMAgent)...')
             ambiguous = self.llm_layer.process_ambiguous_paragraphs(
-                ambiguous, full_paragraphs=paragraphs
+                ambiguous, full_paragraphs=paragraphs, exclude_vendor_source=_vendor_exclude_source
             )
         elif self.llm_layer and SYSTEM_CONFIG.get('use_llm') and not ambiguous:
             # Pattern tagger was fully confident (ambiguous=[]).  Still run LLM on
@@ -11150,7 +12364,7 @@ class CompletePipeline:
             if _block_verify:
                 print('\n5️⃣ Agentic LLM processing (BLOCK verification pass)...')
                 _verified = self.llm_layer.process_ambiguous_paragraphs(
-                    _block_verify, full_paragraphs=paragraphs
+                    _block_verify, full_paragraphs=paragraphs, exclude_vendor_source=_vendor_exclude_source
                 )
                 _vmap = {p.index: p for p in _verified}
                 confirmed = [_vmap.get(p.index, p) for p in confirmed]
@@ -11203,6 +12417,13 @@ class CompletePipeline:
             sgml_content = self._inject_docx_instrtext_hyperlinks(sgml_content, docx_path)
         except Exception as _it_exc:
             print(f"   instrText hyperlink fix error (non-fatal): {_it_exc}")
+
+        # Step 6.9: Normalize parenthetical spaces — ( Abbrev ) → (Abbrev)
+        sgml_content = re.sub(
+            r'\( +(\S[^()]{0,38}\S|\S) +\)',
+            lambda m: f'({m.group(1)})',
+            sgml_content
+        )
 
         # Step 7: Save
         print("\n7️⃣ Saving...")
