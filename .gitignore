@@ -40,3 +40,13 @@ build/
 *.ActivationToken
 *.key
 *.pem
+# ABBYY license files/installers — per ABBYY's own docs: never commit these
+*.ABBYY.*
+FRE*.sh
+
+# ── Docker build: local artifacts regenerated per build, not committed ──────
+# .wheel_cache: `pip3 download` output for requirements.txt (see scripts/build_push.sh)
+# abbyy_bundle: staged from an already-installed, working ABBYY FRE12 (same script) —
+# ~3.3GB, machine-specific, and must never contain license/token files (see above)
+.wheel_cache/
+abbyy_bundle/
