@@ -27,6 +27,12 @@ try:
 except Exception:
     _session_mgr = None
 
+# ── ABBYY license state (default license from the deployment + user override) ─
+try:
+    import abbyy_license as _abbyy_license
+except Exception:  # the page must keep working exactly as before without it
+    _abbyy_license = None
+
 # ── Page config MUST be called first ─────────────────────────────────────────
 st.set_page_config(
     page_title="Securities Commission Conversion",
@@ -376,20 +382,36 @@ with st.sidebar:
             except FileNotFoundError:
                 _svc_ok = False
 
-        if _cli_ok and _svc_ok and _tokens:
-            st.success(f"✅ ABBYY ready — {len(_tokens)} license(s)")
-        elif _cli_ok and _svc_ok and not _tokens:
-            st.warning("⚠️ No license token — go to **License Setup** page")
-        elif _cli_ok and not _svc_ok:
-            st.warning(f"⚠️ {_svc_label} not running")
+        _lv = _abbyy_license.describe() if _abbyy_license else None
+        if _lv is not None and _lv.kind in ("default_active", "custom_active", "activating", "retrying",
+                                            "default_failed", "misconfigured"):
+            # State-aware view: never lists license files (their names can hold identifiers).
+            if _lv.kind in ("default_active", "custom_active") and _cli_ok and _svc_ok:
+                st.success("✅ ABBYY ready — " + ("default license" if _lv.kind == "default_active"
+                                                   else "custom license"))
+            elif _lv.kind in ("default_active", "custom_active"):
+                st.warning(f"⚠️ {_svc_label} not running")
+            elif _lv.kind in ("activating", "retrying"):
+                st.info("⏳ Setting up the ABBYY license…")
+            elif _lv.kind == "default_failed":
+                st.error("❌ Default license not active — see **License Setup**")
+            else:
+                st.warning("⚠️ Default license settings incomplete — contact support")
         else:
-            st.info("ℹ️ ABBYY CLI not on this host")
+            if _cli_ok and _svc_ok and _tokens:
+                st.success(f"✅ ABBYY ready — {len(_tokens)} license(s)")
+            elif _cli_ok and _svc_ok and not _tokens:
+                st.warning("⚠️ No license token — go to **License Setup** page")
+            elif _cli_ok and not _svc_ok:
+                st.warning(f"⚠️ {_svc_label} not running")
+            else:
+                st.info("ℹ️ ABBYY CLI not on this host")
 
-        if _tokens:
-            for _t in _tokens:
-                st.caption(f"• `{_t.name}`")
-        else:
-            st.caption("No `.ActivationToken` files found.")
+            if _tokens:
+                for _t in _tokens:
+                    st.caption(f"• `{_t.name}`")
+            else:
+                st.caption("No `.ActivationToken` files found.")
 
         st.page_link("pages/2_License_Setup.py", label="🔑 Configure License",
                      help="Upload token file or activate with Serial Number")
@@ -470,22 +492,39 @@ def _current_abbyy_license_env() -> dict:
 def _pdf_to_docx(pdf_path: str, docx_path: str) -> bool:
     """Convert PDF to DOCX using bundled ABBYY FREngine 12 CLI directly."""
     import subprocess as _sp
+    from contextlib import nullcontext
     cli  = os.getenv('ABBYY_CLI', '/opt/ABBYY/FREngine12/Samples/CommandLineInterface/CommandLineInterface')
     lib  = os.getenv('ABBYY_LIB', '/opt/ABBYY/FREngine12/Bin')
     _log('INFO', f'PDF→DOCX via ABBYY CLI: {cli}')
+
+    if _abbyy_license is not None and _abbyy_license.describe().kind in ('activating', 'retrying'):
+        _log('WARN', 'ABBYY license is still being set up — PDF conversion postponed.')
+        st.warning("⏳ The ABBYY license is still being set up on this server (about a minute after start-up). "
+                   "Please try again shortly — Word/DOCX uploads work right away.")
+        return False
 
     if not os.path.isfile(cli):
         _log('ERROR', f'ABBYY CLI not found: {cli}')
         st.error(f"❌ ABBYY CLI not found at {cli}")
         return False
 
-    env = {**os.environ, 'LD_LIBRARY_PATH': f"{lib}:{os.environ.get('LD_LIBRARY_PATH', '')}", **_current_abbyy_license_env()}
     cmd = [cli, '-if', pdf_path, '-rl', 'English', '-pam', 'DocumentConversion', '-f', 'DOCX', '-of', docx_path]
     try:
-        r = _sp.run(cmd, env=env, capture_output=True, text=True, timeout=_ABBYY_TIMEOUT)
+        # A license change restarts the licensing service, so it must never overlap a conversion.
+        with (_abbyy_license.conversion_slot() if _abbyy_license is not None else nullcontext(True)) as _slot:
+            if not _slot:
+                _log('WARN', 'ABBYY license change still in progress — PDF conversion postponed.')
+                st.warning("⏳ The ABBYY license is being changed on this server. Please try again in a minute.")
+                return False
+            # read the license settings only now: a change may have just finished
+            env = {**os.environ, 'LD_LIBRARY_PATH': f"{lib}:{os.environ.get('LD_LIBRARY_PATH', '')}", **_current_abbyy_license_env()}
+            r = _sp.run(cmd, env=env, capture_output=True, text=True, timeout=_ABBYY_TIMEOUT)
         if r.returncode != 0:
             _log('ERROR', f'ABBYY CLI failed (rc={r.returncode}): {r.stderr[-300:]}')
             st.error(f"❌ ABBYY conversion failed (rc={r.returncode}): {r.stderr[-300:]}")
+            _hint = _abbyy_license.conversion_hint((r.stdout or '') + (r.stderr or '')) if _abbyy_license is not None else None
+            if _hint:
+                st.info(_hint)
             return False
         if not os.path.exists(docx_path) or os.path.getsize(docx_path) == 0:
             _log('ERROR', 'ABBYY produced empty output')
